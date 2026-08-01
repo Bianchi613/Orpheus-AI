@@ -1,6 +1,7 @@
 .env
 .ai_memory.json
 .orpheus_baseline.json
+ai.status.json
 ai.log
 *.log
 logs/

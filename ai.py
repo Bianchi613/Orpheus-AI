@@ -46,6 +46,8 @@ Comandos internos:
     /logs         mostra o caminho e as últimas linhas do log
     /logs tail N  mostra as últimas N linhas do log
     /logs grep X  filtra o log por texto
+    /monitor      mostra status vivo do agente
+    /monitor watch N  acompanha status vivo a cada N segundos
     /exit         encerra
 """
 
@@ -71,8 +73,10 @@ from typing import Any
 
 WORKDIR = Path.cwd().resolve()
 SCRIPT_DIR = Path(__file__).resolve().parent
-APP_VERSION = "2026.08.01.28"
+APP_VERSION = "2026.08.01.30"
 APP_NAME = "Orpheus"
+SESSION_ID = time.strftime("%Y%m%d-%H%M%S")
+CURRENT_TASK_ID = "idle"
 
 WEB_FETCH_TOOL = {
     "type": "function",
@@ -151,6 +155,61 @@ def grep_log(term: str, limit: int = 80) -> str:
     matches = [line for line in content if needle in line.casefold()]
     matches = matches[-max(1, limit):]
     return "\n".join(matches) if matches else f"Nenhuma linha encontrada para: {term}"
+
+def write_status(state: str, summary: str, **extra: Any) -> None:
+    payload = {
+        "app": APP_NAME,
+        "version": APP_VERSION,
+        "session_id": SESSION_ID,
+        "task_id": CURRENT_TASK_ID,
+        "pid": os.getpid(),
+        "cwd": str(WORKDIR),
+        "state": state,
+        "summary": summary,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_ts": time.time(),
+    }
+    payload.update(extra)
+    try:
+        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_status() -> dict[str, Any] | None:
+    if not STATE_PATH.is_file():
+        return None
+    try:
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def print_monitor() -> None:
+    status = read_status()
+    if not status:
+        print(f"Status ainda não existe: {STATE_PATH}")
+        return
+    print(f"Status: {STATE_PATH}")
+    for key in ("app", "version", "session_id", "task_id", "pid", "cwd", "state", "summary", "updated_at"):
+        print(f"{key}: {status.get(key, 'indisponível')}")
+    age = time.time() - float(status.get("updated_ts", 0) or 0)
+    print(f"idade_do_heartbeat: {age:.1f}s")
+    for key in ("step", "command", "provider", "model", "wait_seconds", "remaining_seconds", "last_error"):
+        if key in status:
+            print(f"{key}: {status[key]}")
+
+
+def watch_monitor(interval: int) -> None:
+    interval = max(1, interval)
+    try:
+        while True:
+            os.system("clear")
+            print_monitor()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\nMonitor interrompido.")
 
 
 SHELL_TOOL = {
@@ -860,6 +919,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 MEMORY_PATH = Path(os.environ.get("AI_MEMORY_FILE", SCRIPT_DIR / ".ai_memory.json")).expanduser()
 LOG_PATH = Path(os.environ.get("AI_LOG_FILE", SCRIPT_DIR / "ai.log")).expanduser()
+STATE_PATH = Path(os.environ.get("AI_STATE_FILE", SCRIPT_DIR / "ai.status.json")).expanduser()
 
 MAX_STEPS = int(os.environ.get("AI_MAX_STEPS", "30"))
 DEFAULT_TIMEOUT = float(os.environ.get("AI_COMMAND_TIMEOUT", "60"))
@@ -1389,7 +1449,12 @@ def run_captured_streaming(command: str, timeout: float, output_limit: int) -> C
                 return CommandResult(stdout, stderr, None, True)
 
             if IDLE_TIMEOUT > 0 and now - last_output >= IDLE_TIMEOUT and now - last_idle_notice >= IDLE_TIMEOUT:
-                message = f"sem nova saída há {IDLE_TIMEOUT:.0f}s; comando ainda está rodando..."
+                silent_for = now - last_output
+                remaining = max(0.0, effective_timeout - (now - start))
+                message = (
+                    f"sem nova saída há {silent_for:.0f}s; comando ainda está rodando... "
+                    f"tempo restante antes de abortar: {remaining:.0f}s"
+                )
                 print(f"\n[{message}]", flush=True)
                 notices.append(message)
                 last_idle_notice = now
@@ -1439,6 +1504,7 @@ def run_command(command: str, timeout: float, output_limit: int) -> CommandResul
     global WORKDIR
 
     append_log("command", command)
+    write_status("running_command", "iniciando comando", command=command)
 
     reason = blocked_reason(command)
     if reason:
@@ -1488,6 +1554,7 @@ def run_command(command: str, timeout: float, output_limit: int) -> CommandResul
         result = run_captured_streaming(command, timeout, output_limit)
         print(f"[código de saída: {result.exit_code if result.exit_code is not None else 'timeout'}]")
         append_log("result", json.dumps({"exit_code": result.exit_code, "stdout": result.stdout, "stderr": result.stderr}, ensure_ascii=False))
+        write_status("command_finished", f"comando finalizado com código {result.exit_code}", command=command, exit_code=result.exit_code)
         return result
 
     except subprocess.TimeoutExpired as exc:
@@ -1732,7 +1799,10 @@ def run_task(
     memory: list[str],
     user_text: str,
 ) -> None:
+    global CURRENT_TASK_ID
+    CURRENT_TASK_ID = f"task-{int(time.time())}"
     append_log("user", user_text)
+    write_status("task_started", "tarefa recebida", task_input=user_text)
     history.append({"role": "user", "content": user_text})
     remembered_from_user = add_memory_items(memory, infer_memory_from_user_text(user_text))
     for item in remembered_from_user:
@@ -1752,12 +1822,21 @@ def run_task(
             if memory_message:
                 messages.append({"role": "system", "content": memory_message})
             messages.extend(history)
+            write_status("api_wait", "aguardando resposta da API", provider=client.url, model=model, step=_step)
             response = client.chat(model, messages)
             append_log("api_response", json.dumps(response, ensure_ascii=False)[:4000])
+            write_status("api_done", "resposta da API recebida", provider=client.url, model=model, step=_step)
         except KeyboardInterrupt:
             print("\nInterrompido pelo usuário.")
             return
         except Exception as exc:
+            message = str(exc)
+            if "timed out" in message.lower() or "timeout" in message.lower():
+                append_log("api_timeout", f"{type(exc).__name__}: {exc}")
+                print(f"\nA API demorou para responder: {type(exc).__name__}: {exc}")
+                print("O agente não travou; a espera terminou por tempo de rede/API.")
+                print("Você pode tentar novamente, trocar de provedor/modelo ou repetir o pedido.")
+                return
             append_log("api_error", f"{type(exc).__name__}: {exc}")
             print(f"\nErro na API: {type(exc).__name__}: {exc}")
             return
@@ -1818,6 +1897,7 @@ def run_task(
                     }
                 )
                 continue
+            write_status("completed", "tarefa concluída", step=_step)
             print(colorize(f"\nIA: {final_text or 'tarefa encerrada sem resposta textual.'}", COLOR_AI))
             return
 
@@ -1909,15 +1989,18 @@ def print_banner(provider: str, model: str, memory_count: int) -> None:
     self_mode = "ativa" if SELF_MODIFY else "desativada"
     print(colorize(APP_NAME, BOLD + COLOR_INFO))
     print(f"Versão:   {APP_VERSION}")
+    print(f"Sessão:   {SESSION_ID}")
     print(f"Provedor: {provider}")
     print(f"Modelo:   {model}")
     print(f"Pasta:  {WORKDIR}")
     print(f"Modo:   {mode}")
     print(f"Prompt:  {PROMPT_PATH}")
+    print(f"Log:     {LOG_PATH}")
+    print(f"Status:  {STATE_PATH}")
     print("Bloqueios permanentes: exclusão, desinstalação e formatação.")
     print("sudo: permitido somente com confirmação e senha no terminal.")
     print(f"Auto-programação: {self_mode}. Use /self on, /self off ou /self status.")
-    print("Comandos de bordo: /board, /brief, /alerts, /baseline, /compare, /incident.")
+    print("Comandos de bordo: /board, /brief, /alerts, /baseline, /compare, /incident, /monitor.")
     print(f"Memória: {memory_count} item(ns) salvo(s). Use /mem, /remember e /forget.")
     print("Digite /exit para sair.\n")
 
@@ -1930,7 +2013,12 @@ def main() -> int:
     parser.add_argument("--model")
     parser.add_argument("pedido", nargs="*")
     parser.add_argument("--self-modify", choices=("on", "off"))
+    parser.add_argument("--monitor", action="store_true")
     args = parser.parse_args()
+
+    if args.monitor:
+        print_monitor()
+        return 0
 
     provider = (args.provider or os.environ.get("AI_PROVIDER", "openai")).lower()
     if provider == "ollama":
@@ -1955,6 +2043,7 @@ def main() -> int:
     prompt_template = load_prompt_template()
     history: list[Any] = []
     memory = load_memory()
+    write_status("idle", "agente iniciado e aguardando comando", provider=provider, model=model)
     print_banner(provider, model, len(memory))
 
     initial = " ".join(args.pedido).strip()
@@ -1965,6 +2054,7 @@ def main() -> int:
         try:
             text = input(colorize("\nVocê: ", COLOR_USER)).strip()
         except (EOFError, KeyboardInterrupt):
+            write_status("stopped", "agente encerrado pelo terminal")
             print("\nEncerrado.")
             return 0
 
@@ -1974,6 +2064,7 @@ def main() -> int:
         command = text.lower()
 
         if command in {"/exit", "/quit", "exit", "quit"}:
+            write_status("stopped", "encerrado por comando do usuário")
             print("Encerrado.")
             return 0
 
@@ -2040,6 +2131,22 @@ def main() -> int:
                 print("Uso: /web URL")
                 continue
             print_web_summary(url)
+            continue
+
+        if command == "/monitor":
+            print_monitor()
+            continue
+
+        if command.startswith("/monitor watch"):
+            parts = text.split()
+            interval = 2
+            if len(parts) >= 3:
+                try:
+                    interval = int(parts[2])
+                except ValueError:
+                    print("Uso: /monitor watch N")
+                    continue
+            watch_monitor(interval)
             continue
 
         if command == "/logs":
