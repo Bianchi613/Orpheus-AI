@@ -129,18 +129,26 @@ class CommandResult:
     timed_out: bool
 
 
+def secret_read_reason(command: str) -> str | None:
+    """Bloqueia leitura de credenciais reais, mas permite arquivos de exemplo."""
+    return "leitura de credenciais ou segredos é proibida" if reads_real_env_file(command) else None
+
+
+
 def blocked_reason(command: str) -> str | None:
     """Retorna o motivo de bloqueio quando o comando viola regra permanente."""
     normalized = command.strip()
-    if reads_real_env_file(normalized):
-        return "leitura de credenciais ou segredos é proibida"
+
+    secret_reason = secret_read_reason(normalized)
+    if secret_reason:
+        return secret_reason
+
     for pattern, reason in BLOCK_RULES:
         if pattern.search(normalized):
             return reason
-    compound_reason = compound_state_change_reason(normalized)
-    if compound_reason:
-        return compound_reason
-    return None
+
+    return compound_state_change_reason(normalized)
+
 
 
 def reads_real_env_file(command: str) -> bool:
@@ -196,6 +204,30 @@ def strip_discard_redirections(command: str) -> str:
     return cleaned.strip()
 
 
+def is_safe_read_segment(piece: str) -> bool:
+    """Valida um segmento individual de comando para uso sem confirmação."""
+    if not piece:
+        return False
+    if re.fullmatch(r"cd\s+.+", piece):
+        return True
+    if piece in {"true", ":"}:
+        return True
+    if piece in {". /etc/os-release", ". /usr/lib/os-release"}:
+        return True
+
+    program = first_program(piece)
+    if program not in READ_ONLY_PREFIXES:
+        return False
+    if program == "apt" and not re.search(r"\bapt\s+list\b", piece, re.I):
+        return False
+    if STATE_CHANGING_WORDS.search(piece):
+        return False
+    if re.search(r"(?<![<])>{1,2}(?![>])", piece):
+        return False
+    return True
+
+
+
 def looks_read_only(command: str) -> bool:
     """Decide se um comando parece apenas leitura e pode rodar sem confirmação."""
     normalized = command.strip()
@@ -209,23 +241,10 @@ def looks_read_only(command: str) -> bool:
         piece = strip_discard_redirections(segment.strip())
         if not piece:
             continue
-        if re.fullmatch(r"cd\s+.+", piece):
-            continue
-        if piece in {"true", ":"}:
-            continue
-        if piece in {". /etc/os-release", ". /usr/lib/os-release"}:
-            continue
-
-        program = first_program(piece)
-        if program not in READ_ONLY_PREFIXES:
+        if not is_safe_read_segment(piece):
             return False
-        if program == "apt" and not re.search(r"\bapt\s+list\b", piece, re.I):
-            return False
-        if STATE_CHANGING_WORDS.search(piece):
-            return False
-        if re.search(r"(?<![<])>{1,2}(?![>])", piece):
-            return False
-        saw_real_read = True
+        if piece not in {"true", ":"} and not re.fullmatch(r"cd\s+.+", piece):
+            saw_real_read = True
 
     return saw_real_read
 

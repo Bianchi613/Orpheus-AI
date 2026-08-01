@@ -522,6 +522,37 @@ def read_text_file(path: Path) -> str:
         return ""
 
 
+def _format_snapshot_value(key: str, raw_value: str) -> str:
+    """Normaliza campos do snapshot para uma apresentação curta e estável."""
+    if key == "mem" and raw_value and raw_value != "indisponível":
+        parts = raw_value.split()
+        if len(parts) >= 3:
+            return f"{parts[0]} total, {parts[1]} usados, {parts[2]} disponiveis"
+    elif key == "root" and raw_value and raw_value != "indisponível":
+        parts = raw_value.split()
+        if len(parts) >= 3:
+            return f"{parts[0]} usados de {parts[1]} ({parts[2]})"
+    elif key == "wifi" and raw_value and raw_value != "indisponível":
+        parts = raw_value.split(":", 1)
+        if len(parts) == 2:
+            return f"{parts[0]} ({parts[1]})"
+    elif key == "battery" and raw_value and raw_value != "indisponível":
+        parts = [line.strip() for line in raw_value.splitlines() if line.strip()]
+        if len(parts) >= 2:
+            return f"{parts[0]}% ({parts[1]})"
+    return raw_value
+
+
+
+def _clean_snapshot_value(raw_value: str) -> str:
+    """Remove marcadores locais de rejeição antes de mostrar no painel."""
+    return raw_value.replace(
+        "REJEITADO PELO USUÁRIO: o comando não foi executado.",
+        "",
+    ).replace("REJEITADO PELO USUÁRIO", "").strip()
+
+
+
 def collect_system_snapshot() -> dict[str, Any]:
     """Coleta um retrato rápido do computador para /status, /board e baseline."""
     snapshot: dict[str, Any] = {}
@@ -547,27 +578,12 @@ def collect_system_snapshot() -> dict[str, Any]:
     for key, command in commands.items():
         result = _internal_read_command(command, min(cfg.DEFAULT_TIMEOUT, 20), 4000)
         raw_value = (result.stdout or result.stderr).strip()
-        if key == "mem" and raw_value and raw_value != "indisponível":
-            parts = raw_value.split()
-            if len(parts) >= 3:
-                raw_value = f"{parts[0]} total, {parts[1]} usados, {parts[2]} disponiveis"
-        elif key == "root" and raw_value and raw_value != "indisponível":
-            parts = raw_value.split()
-            if len(parts) >= 3:
-                raw_value = f"{parts[0]} usados de {parts[1]} ({parts[2]})"
-        elif key == "wifi" and raw_value and raw_value != "indisponível":
-            parts = raw_value.split(":", 1)
-            if len(parts) == 2:
-                raw_value = f"{parts[0]} ({parts[1]})"
-        elif key == "battery" and raw_value and raw_value != "indisponível":
-            parts = [line.strip() for line in raw_value.splitlines() if line.strip()]
-            if len(parts) >= 2:
-                raw_value = f"{parts[0]}% ({parts[1]})"
+        formatted_value = _format_snapshot_value(key, raw_value)
 
-        if result.exit_code != 0 and not raw_value:
+        if result.exit_code != 0 and not formatted_value:
             snapshot[key] = "indisponível"
         else:
-            cleaned = raw_value.replace("REJEITADO PELO USUÁRIO: o comando não foi executado.", "").replace("REJEITADO PELO USUÁRIO", "").strip()
+            cleaned = _clean_snapshot_value(formatted_value)
             snapshot[key] = cleaned or "indisponível"
 
     temp_value = "indisponível"

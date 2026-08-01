@@ -136,6 +136,15 @@ def extract_safe_probe_command(text: str) -> str | None:
     return None
 
 
+
+def append_history_message(history: list[Any], role: str, content: str, **extra: Any) -> None:
+    """Adiciona mensagem ao histórico em formato compatível com a API."""
+    payload: dict[str, Any] = {"role": role, "content": content}
+    payload.update(extra)
+    history.append(payload)
+
+
+
 def run_task(
     client: api.ApiClient,
     model: str,
@@ -220,14 +229,13 @@ def run_task(
             final_text = (message.get("content") or "").strip()
             if not final_text and summary_nudges < 2:
                 summary_nudges += 1
-                history.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Agora responda em texto curto, em português, dizendo "
-                            "o que você encontrou, o que fez e se a tarefa terminou."
-                        ),
-                    }
+                append_history_message(
+                    history,
+                    "user",
+                    (
+                        "Agora responda em texto curto, em português, dizendo "
+                        "o que você encontrou, o que fez e se a tarefa terminou."
+                    ),
                 )
                 continue
             probe_command = extract_safe_probe_command(final_text)
@@ -239,44 +247,41 @@ def run_task(
                 )
                 for item in remembered_from_command:
                     print(f"Memória atualizada: {item}")
-                history.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            f'O comando de diagnóstico "{probe_command}" foi executado '
-                            f'automaticamente. Resultado JSON: {command_result_text(result)}. '
-                            "Continue a tarefa sem me pedir para rodar comandos."
-                        ),
-                    }
+                append_history_message(
+                    history,
+                    "user",
+                    (
+                        f'O comando de diagnóstico "{probe_command}" foi executado '
+                        f'automaticamente. Resultado JSON: {command_result_text(result)}. '
+                        "Continue a tarefa sem me pedir para rodar comandos."
+                    ),
                 )
                 tool_nudges += 1
                 continue
             if ambiguous_working_query and summary_nudges < 2:
                 summary_nudges += 1
-                history.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "O pedido do usuário está ambíguo: ele perguntou se algo está funcionando, "
-                            "mas não disse o alvo. Não assuma Docker nem outro componente por memória. "
-                            "Responda apenas pedindo clarificação objetiva do alvo. Se o usuário falar de você, "
-                            "responda sobre seu próprio estado em vez de inferir outro sistema."
-                        ),
-                    }
+                append_history_message(
+                    history,
+                    "user",
+                    (
+                        "O pedido do usuário está ambíguo: ele perguntou se algo está funcionando, "
+                        "mas não disse o alvo. Não assuma Docker nem outro componente por memória. "
+                        "Responda apenas pedindo clarificação objetiva do alvo. Se o usuário falar de você, "
+                        "responda sobre seu próprio estado em vez de inferir outro sistema."
+                    ),
                 )
                 continue
             if should_nudge_tool_use(final_text) and tool_nudges < 4:
                 tool_nudges += 1
-                history.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Você tem acesso direto à ferramenta run_shell. "
-                            "Não peça para eu rodar comandos que você mesmo pode executar. "
-                            "Se precisar investigar, instalar, validar ou verificar algo, "
-                            "chame a ferramenta agora e continue a tarefa."
-                        ),
-                    }
+                append_history_message(
+                    history,
+                    "user",
+                    (
+                        "Você tem acesso direto à ferramenta run_shell. "
+                        "Não peça para eu rodar comandos que você mesmo pode executar. "
+                        "Se precisar investigar, instalar, validar ou verificar algo, "
+                        "chame a ferramenta agora e continue a tarefa."
+                    ),
                 )
                 continue
             state.write_status("completed", "tarefa concluída", step=_step)
@@ -317,7 +322,7 @@ def run_task(
                         result_text = command_result_text(result)
                     except ValueError as exc:
                         result_text = json.dumps({"error": f"argumentos inválidos: {exc}"})
-                elif name == "api.fetch_url":
+                elif name in {"fetch_url", "api.fetch_url"}:
                     url = args.get("url")
                     method = args.get("method", "GET")
                     max_bytes = args.get("max_bytes", 12000)
@@ -331,12 +336,11 @@ def run_task(
                 else:
                     result_text = json.dumps({"error": "ferramenta desconhecida"})
 
-            history.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.get("id", function.get("name", "run_shell")),
-                    "content": result_text,
-                }
+            append_history_message(
+                history,
+                "tool",
+                result_text,
+                tool_call_id=call.get("id", function.get("name", "run_shell")),
             )
             if result and result.exit_code == 0 and not executor.looks_read_only(command):
                 should_prompt_validation = True
@@ -344,30 +348,28 @@ def run_task(
         if should_prompt_docker_journal:
             # Caso especial: Docker falhou. O próximo passo útil quase sempre é
             # ler journalctl, então o agente é empurrado para investigar.
-            history.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "O status do Docker falhou. Investigue agora com "
-                        "journalctl -u docker -n 100 --no-pager, identifique a causa "
-                        "e continue sozinho."
-                    ),
-                }
+            append_history_message(
+                history,
+                "user",
+                (
+                    "O status do Docker falhou. Investigue agora com "
+                    "journalctl -u docker -n 100 --no-pager, identifique a causa "
+                    "e continue sozinho."
+                ),
             )
             continue
 
         if should_prompt_validation:
             # Depois de uma mudança real, o agente deve validar em vez de encerrar
             # cedo demais dizendo só "pronto".
-            history.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "Continue sozinho. Se você acabou de instalar, configurar ou alterar "
-                        "algo, valide agora com comandos objetivos antes de encerrar e depois "
-                        "resuma o resultado em português."
-                    ),
-                }
+            append_history_message(
+                history,
+                "user",
+                (
+                    "Continue sozinho. Se você acabou de instalar, configurar ou alterar "
+                    "algo, valide agora com comandos objetivos antes de encerrar e depois "
+                    "resuma o resultado em português."
+                ),
             )
 
     print(f"\nInterrompido: o limite de {cfg.MAX_STEPS} ciclos foi atingido.")
