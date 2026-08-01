@@ -4,6 +4,19 @@ sudo
 coreutils
 curl
 ca-certificates
+procps
+util-linux
+iproute2
+grep
+sed
+gawk
+findutils
+pciutils
+usbutils
+network-manager
+systemd
+lsb-release
+git
 
 # opcionais
 # ollama
