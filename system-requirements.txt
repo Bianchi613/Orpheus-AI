@@ -1,0 +1,10 @@
+python3
+bash
+sudo
+coreutils
+curl
+ca-certificates
+
+# opcionais
+# ollama
+# docker.io

@@ -1,0 +1,12 @@
+.env
+.ai_memory.json
+.orpheus_baseline.json
+ai.log
+__pycache__/
+*.py[cod]
+
+# Backups locais fora do projeto versionavel.
+.local-backups/
+
+# Arquivos soltos locais que nao fazem parte do projeto.
+.local-trash/
