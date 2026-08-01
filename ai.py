@@ -5,6 +5,16 @@ ai.py - Assistente de terminal com OpenAI ou Ollama + shell local.
 Fluxo:
     você -> modelo pela API -> comando local -> resultado -> modelo
 
+Mapa rápido do arquivo:
+    1. Configuração global e ferramentas expostas ao modelo.
+    2. Cliente HTTP para OpenAI/Ollama.
+    3. Memória persistente do usuário.
+    4. Painel de saúde, baseline e monitor local.
+    5. Prompt externo e variáveis do .env.
+    6. Regras de segurança do executor.
+    7. Execução de comandos com aprovação, streaming e watchdog.
+    8. Loop principal da conversa.
+
 Requisitos:
     Python 3.10+
     Nenhuma biblioteca Python externa.
@@ -71,13 +81,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# WORKDIR é a pasta onde o usuário abriu o agente. Os comandos rodam daqui.
 WORKDIR = Path.cwd().resolve()
+
+# SCRIPT_DIR é a pasta onde o ai.py está salvo. Arquivos locais do Orpheus
+# ficam aqui por padrão: .env, memória, log, prompt e status.
 SCRIPT_DIR = Path(__file__).resolve().parent
+
 APP_VERSION = "2026.08.01.30"
 APP_NAME = "Orpheus"
+
+# SESSION_ID identifica esta execução do agente. Ajuda a diferenciar sessões
+# quando o usuário abre mais de uma janela ou consulta o monitor.
 SESSION_ID = time.strftime("%Y%m%d-%H%M%S")
+
+# CURRENT_TASK_ID muda quando uma nova tarefa começa. O monitor grava isso no
+# ai.status.json para mostrar se o agente está parado, pensando ou executando.
 CURRENT_TASK_ID = "idle"
 
+# Definição da ferramenta de busca HTTP que o modelo pode chamar. Ela é
+# limitada a HTTP/HTTPS e usada para documentação/páginas públicas.
 WEB_FETCH_TOOL = {
     "type": "function",
     "function": {
@@ -107,12 +130,14 @@ COLOR_INFO = "\033[93m"
 
 
 def colorize(text: str, color: str) -> str:
+    """Aplica cor ANSI só quando a saída é um terminal real."""
     if not sys.stdout.isatty():
         return text
     return f"{color}{text}{RESET}"
 
 
 def sanitize_log_text(text: str) -> str:
+    """Remove segredos óbvios antes de escrever qualquer coisa no log local."""
     cleaned = text.replace("\r", "")
     patterns = [
         re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s]+"),
@@ -123,6 +148,7 @@ def sanitize_log_text(text: str) -> str:
     return cleaned
 
 def append_log(event: str, message: str) -> None:
+    """Grava eventos do agente em ai.log sem parar o programa se o log falhar."""
     try:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{timestamp}] {event}: {sanitize_log_text(message)}\n"
@@ -134,6 +160,7 @@ def append_log(event: str, message: str) -> None:
 
 
 def read_log_tail(lines: int = 40) -> str:
+    """Lê as últimas linhas do log para o comando interno /logs."""
     if not LOG_PATH.is_file():
         return f"Log ainda não existe: {LOG_PATH}"
     try:
@@ -145,6 +172,7 @@ def read_log_tail(lines: int = 40) -> str:
 
 
 def grep_log(term: str, limit: int = 80) -> str:
+    """Procura texto no log local para o comando interno /logs grep."""
     if not LOG_PATH.is_file():
         return f"Log ainda não existe: {LOG_PATH}"
     try:
@@ -157,6 +185,7 @@ def grep_log(term: str, limit: int = 80) -> str:
     return "\n".join(matches) if matches else f"Nenhuma linha encontrada para: {term}"
 
 def write_status(state: str, summary: str, **extra: Any) -> None:
+    """Atualiza o arquivo vivo ai.status.json usado pelo /monitor."""
     payload = {
         "app": APP_NAME,
         "version": APP_VERSION,
@@ -178,6 +207,7 @@ def write_status(state: str, summary: str, **extra: Any) -> None:
 
 
 def read_status() -> dict[str, Any] | None:
+    """Carrega o último status vivo gravado pelo agente."""
     if not STATE_PATH.is_file():
         return None
     try:
@@ -187,6 +217,7 @@ def read_status() -> dict[str, Any] | None:
 
 
 def print_monitor() -> None:
+    """Mostra uma leitura humana do ai.status.json."""
     status = read_status()
     if not status:
         print(f"Status ainda não existe: {STATE_PATH}")
@@ -202,6 +233,7 @@ def print_monitor() -> None:
 
 
 def watch_monitor(interval: int) -> None:
+    """Reexibe o monitor em loop, útil para acompanhar outra janela do agente."""
     interval = max(1, interval)
     try:
         while True:
@@ -236,10 +268,12 @@ class ApiClient:
     """Cliente HTTP mínimo para Chat Completions (OpenAI e Ollama)."""
 
     def __init__(self, base_url: str, api_key: str | None = None) -> None:
+        # OpenAI e Ollama usam caminho compatível /chat/completions.
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key = api_key
 
     def chat(self, model: str, messages: list[Any]) -> dict[str, Any]:
+        """Envia histórico + ferramentas para o modelo e devolve o JSON bruto."""
         payload = json.dumps(
             {
                 "model": model,
@@ -289,6 +323,7 @@ def load_dotenv(path: Path) -> None:
 
 
 def load_memory() -> list[str]:
+    """Lê a memória persistente local, se existir."""
     if not MEMORY_PATH.is_file():
         return []
 
@@ -309,6 +344,7 @@ def load_memory() -> list[str]:
 
 
 def save_memory(items: list[str]) -> None:
+    """Salva a memória em JSON local ignorado pelo git."""
     MEMORY_PATH.write_text(
         json.dumps({"items": items}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -316,10 +352,12 @@ def save_memory(items: list[str]) -> None:
 
 
 def normalize_memory_item(text: str) -> str:
+    """Normaliza texto para comparar memórias sem duplicar por maiúsculas/espaços."""
     return " ".join(text.strip().split()).casefold()
 
 
 def canonical_memory_key(text: str) -> str:
+    """Gera uma chave estável para substituir fatos duradouros do mesmo tipo."""
     cleaned = normalize_memory_item(text)
     for prefix in (
         "sistema do usuário:",
@@ -342,6 +380,8 @@ def canonical_memory_key(text: str) -> str:
     return cleaned
 
 
+# Regras simples para decidir o que vale salvar: preferências, identidade,
+# ambiente da máquina e escolhas operacionais do usuário.
 MEMORY_IMPORTANCE_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(prefere|preferencia|preferência|quer|gosta|evite|nunca|sempre)\b", re.I), "preferência"),
     (re.compile(r"\b(meu nome|me chama|pode me chamar|sou o)\b", re.I), "identidade"),
@@ -350,6 +390,7 @@ MEMORY_IMPORTANCE_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(sistema do usuário|usuário do sistema|grupo[s]? do usuário|kernel|cpu|processador|ram|memória|ssd|armazenamento|bateria|wifi|wi-fi|placa de rede|gpu)\b", re.I), "ambiente"),
 ]
 
+# Frases curtas de conversa comum não devem virar memória permanente.
 MEMORY_IGNORE_PATTERNS = [
     re.compile(pattern, re.I)
     for pattern in (
@@ -365,6 +406,7 @@ MEMORY_IGNORE_PATTERNS = [
 
 
 def is_important_memory(text: str) -> bool:
+    """Decide se um texto é importante o bastante para entrar na memória."""
     cleaned = " ".join(text.strip().split())
     if not cleaned or len(cleaned) < 8:
         return False
@@ -374,6 +416,7 @@ def is_important_memory(text: str) -> bool:
 
 
 def classify_memory_item(text: str) -> str:
+    """Classifica memória para ordenar o que entra primeiro no prompt."""
     for pattern, tag in MEMORY_IMPORTANCE_RULES:
         if pattern.search(text):
             return tag
@@ -381,6 +424,7 @@ def classify_memory_item(text: str) -> str:
 
 
 def memory_priority(item: str) -> tuple[int, str]:
+    """Dá prioridade para identidade/preferências antes de fatos gerais."""
     tag = classify_memory_item(item)
     order = {
         "identidade": 0,
@@ -393,6 +437,7 @@ def memory_priority(item: str) -> tuple[int, str]:
 
 
 def select_relevant_memory(items: list[str], limit: int = 12) -> list[str]:
+    """Escolhe poucas memórias relevantes para não lotar o prompt do modelo."""
     unique: list[str] = []
     seen: set[str] = set()
     for item in sorted(items, key=memory_priority):
@@ -407,6 +452,7 @@ def select_relevant_memory(items: list[str], limit: int = 12) -> list[str]:
 
 
 def add_memory_items(memory: list[str], items: list[str], force: bool = False) -> list[str]:
+    """Adiciona memórias novas, evita duplicatas e salva no disco."""
     added: list[str] = []
     seen = {canonical_memory_key(item) for item in memory}
 
@@ -429,6 +475,7 @@ def add_memory_items(memory: list[str], items: list[str], force: bool = False) -
 
 
 def memory_text(items: list[str]) -> str:
+    """Renderiza memória dentro do prompt externo .ai_prompt.txt."""
     selected = select_relevant_memory(items)
     if not selected:
         return "Memória persistente: vazia."
@@ -439,6 +486,7 @@ def memory_text(items: list[str]) -> str:
 
 
 def memory_system_message(items: list[str]) -> str | None:
+    """Cria uma mensagem system extra reforçando memórias importantes."""
     selected = select_relevant_memory(items)
     if not selected:
         return None
@@ -451,6 +499,7 @@ def memory_system_message(items: list[str]) -> str | None:
 
 
 def self_modify_text() -> str:
+    """Diz ao modelo se ele pode alterar o próprio agente nesta sessão."""
     if SELF_MODIFY:
         return (
             "Auto-programação: ativa. Quando o usuário pedir para corrigir, melhorar "
@@ -467,6 +516,7 @@ def self_modify_text() -> str:
 
 
 def infer_memory_from_user_text(text: str) -> list[str]:
+    """Extrai memórias a partir do que o usuário escreve na conversa."""
     normalized = " ".join(text.strip().split())
     lowered = normalized.casefold()
     items: list[str] = []
@@ -493,6 +543,7 @@ def infer_memory_from_user_text(text: str) -> list[str]:
 
 
 def infer_memory_from_command_output(command: str, result: "CommandResult") -> list[str]:
+    """Extrai memórias técnicas a partir de comandos bem-sucedidos."""
     if result.exit_code != 0:
         return []
 
@@ -617,6 +668,7 @@ def infer_memory_from_command_output(command: str, result: "CommandResult") -> l
 
 
 def shell_exists(command: str) -> bool:
+    """Confere se um comando existe no PATH sem imprimir nada."""
     return subprocess.run(
         f"command -v {shlex.quote(command)} >/dev/null 2>&1",
         shell=True,
@@ -627,6 +679,7 @@ def shell_exists(command: str) -> bool:
 
 
 def read_text_file(path: Path) -> str:
+    """Lê arquivo pequeno de diagnóstico; falha vira string vazia."""
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -634,6 +687,7 @@ def read_text_file(path: Path) -> str:
 
 
 def collect_system_snapshot() -> dict[str, Any]:
+    """Coleta um retrato rápido do computador para /status, /board e baseline."""
     snapshot: dict[str, Any] = {}
 
     date_result = internal_read_command("date '+%F %T %Z'", min(DEFAULT_TIMEOUT, 10), 1000)
@@ -698,6 +752,7 @@ def collect_system_snapshot() -> dict[str, Any]:
 
 
 def build_health_alerts(snapshot: dict[str, Any]) -> list[dict[str, str]]:
+    """Transforma o snapshot em alertas simples: disco, rede, docker, bateria etc."""
     alerts: list[dict[str, str]] = []
 
     def add_alert(severity: str, message: str) -> None:
@@ -743,6 +798,7 @@ def build_health_alerts(snapshot: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def summarize_alerts(alerts: list[dict[str, str]]) -> str:
+    """Resume quantos alertas críticos/de atenção existem."""
     if not alerts:
         return "sem alertas ativos"
     counts = {"critico": 0, "atencao": 0, "info": 0}
@@ -760,6 +816,7 @@ def summarize_alerts(alerts: list[dict[str, str]]) -> str:
 
 
 def render_alerts(alerts: list[dict[str, str]]) -> str:
+    """Formata alertas para mostrar no terminal."""
     if not alerts:
         return "Alertas: nenhum alerta simples no momento"
     lines = ["Alertas:"]
@@ -770,6 +827,7 @@ def render_alerts(alerts: list[dict[str, str]]) -> str:
 
 
 def render_status(snapshot: dict[str, Any], alerts: list[dict[str, str]]) -> str:
+    """Monta o painel textual do Orpheus."""
     lines = [
         "Painel de bordo do Orpheus",
         f"Hora:        {snapshot.get('time', 'indisponível')}",
@@ -793,6 +851,7 @@ def render_status(snapshot: dict[str, Any], alerts: list[dict[str, str]]) -> str
 
 
 def print_status_panel() -> tuple[dict[str, Any], list[str]]:
+    """Executa diagnóstico e imprime o painel completo."""
     snapshot = collect_system_snapshot()
     alerts = build_health_alerts(snapshot)
     print(render_status(snapshot, alerts))
@@ -800,6 +859,7 @@ def print_status_panel() -> tuple[dict[str, Any], list[str]]:
 
 
 def run_watch(interval_seconds: int) -> None:
+    """Atualiza o painel /status repetidamente no terminal."""
     interval = max(2, min(interval_seconds, 3600))
     print(f"Monitorando o painel a cada {interval} segundo(s). Ctrl+C para parar.")
     try:
@@ -813,16 +873,19 @@ def run_watch(interval_seconds: int) -> None:
 
 
 def baseline_path() -> Path:
+    """Caminho do baseline local; é ignorado pelo git."""
     return SCRIPT_DIR / ".orpheus_baseline.json"
 
 
 def save_baseline(snapshot: dict[str, Any]) -> Path:
+    """Salva o estado atual para comparar depois com /compare."""
     path = baseline_path()
     path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
 
 
 def load_baseline() -> dict[str, Any] | None:
+    """Carrega o baseline salvo, se existir e for JSON válido."""
     path = baseline_path()
     if not path.is_file():
         return None
@@ -834,6 +897,7 @@ def load_baseline() -> dict[str, Any] | None:
 
 
 def compare_with_baseline(snapshot: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
+    """Compara campos principais do snapshot atual com o baseline salvo."""
     keys = ["kernel", "uptime", "load", "mem", "root", "ip", "route", "wifi", "docker", "battery", "temp"]
     changes: list[str] = []
     for key in keys:
@@ -845,18 +909,21 @@ def compare_with_baseline(snapshot: dict[str, Any], baseline: dict[str, Any]) ->
 
 
 def print_brief() -> None:
+    """Mostra uma linha curta com o estado principal do computador."""
     snapshot = collect_system_snapshot()
     alerts = build_health_alerts(snapshot)
     print(f"Orpheus | host={snapshot.get('host', 'indisponível')} | uptime={snapshot.get('uptime', 'indisponível')} | carga={snapshot.get('load', 'indisponível')} | memória={snapshot.get('mem', 'indisponível')} | disco={snapshot.get('root', 'indisponível')} | docker={snapshot.get('docker', 'indisponível')} | alertas={summarize_alerts(alerts)}")
 
 
 def print_alerts_only() -> None:
+    """Mostra só alertas, sem painel completo."""
     snapshot = collect_system_snapshot()
     alerts = build_health_alerts(snapshot)
     print(render_alerts(alerts))
 
 
 def print_incident_summary() -> None:
+    """Resume a saúde atual em formato de incidente/próximo passo."""
     snapshot = collect_system_snapshot()
     alerts = build_health_alerts(snapshot)
     print("Incidente / saúde atual")
@@ -872,6 +939,7 @@ def print_incident_summary() -> None:
 
 
 def print_web_summary(url: str) -> None:
+    """Busca uma URL pelo fetch_url e imprime uma prévia curta."""
     append_log("web_request", url)
     result = fetch_url(url, "GET", 4000)
     if result.get("error"):
@@ -890,6 +958,7 @@ def print_web_summary(url: str) -> None:
 
 
 def load_prompt_template() -> str:
+    """Carrega o prompt externo; o comportamento do agente mora fora do código."""
     try:
         text = PROMPT_PATH.read_text(encoding="utf-8").strip()
     except OSError:
@@ -904,6 +973,7 @@ def load_prompt_template() -> str:
 
 
 def render_prompt(template: str, memory: list[str]) -> str:
+    """Preenche variáveis do prompt: pasta, memória e modo self-modify."""
     return (
         template
         .replace("{{WORKDIR}}", str(WORKDIR))
@@ -913,6 +983,7 @@ def render_prompt(template: str, memory: list[str]) -> str:
 
 
 # O .env da pasta atual tem precedência sobre o que fica junto do script.
+# Isso permite rodar o mesmo ai.py em outra pasta com configuração diferente.
 if WORKDIR != Path(__file__).resolve().parent:
     load_dotenv(WORKDIR / ".env")
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -921,6 +992,7 @@ MEMORY_PATH = Path(os.environ.get("AI_MEMORY_FILE", SCRIPT_DIR / ".ai_memory.jso
 LOG_PATH = Path(os.environ.get("AI_LOG_FILE", SCRIPT_DIR / "ai.log")).expanduser()
 STATE_PATH = Path(os.environ.get("AI_STATE_FILE", SCRIPT_DIR / "ai.status.json")).expanduser()
 
+# Variáveis principais do executor. Todas podem ser ajustadas no .env.
 MAX_STEPS = int(os.environ.get("AI_MAX_STEPS", "30"))
 DEFAULT_TIMEOUT = float(os.environ.get("AI_COMMAND_TIMEOUT", "60"))
 LONG_COMMAND_TIMEOUT = float(os.environ.get("AI_LONG_COMMAND_TIMEOUT", "900"))
@@ -1029,6 +1101,7 @@ STATE_CHANGING_WORDS = re.compile(
 
 @dataclass
 class CommandResult:
+    """Resultado padronizado de qualquer comando executado pelo agente."""
     stdout: str
     stderr: str
     exit_code: int | None
@@ -1036,6 +1109,7 @@ class CommandResult:
 
 
 def blocked_reason(command: str) -> str | None:
+    """Retorna o motivo de bloqueio quando o comando viola regra permanente."""
     normalized = command.strip()
     for pattern, reason in BLOCK_RULES:
         if pattern.search(normalized):
@@ -1077,6 +1151,7 @@ def strip_discard_redirections(command: str) -> str:
 
 
 def looks_read_only(command: str) -> bool:
+    """Decide se um comando parece apenas leitura e pode rodar sem confirmação."""
     normalized = command.strip()
     if not normalized:
         return False
@@ -1110,6 +1185,7 @@ def looks_read_only(command: str) -> bool:
 
 
 def compound_state_change_reason(command: str) -> str | None:
+    """Bloqueia comandos compostos arriscados, principalmente envolvendo APT."""
     normalized = command.strip()
     if not normalized:
         return None
@@ -1147,6 +1223,7 @@ def compound_state_change_reason(command: str) -> str | None:
 
 
 def apt_simulation_command(command: str) -> str | None:
+    """Converte uma ação APT de instalação/upgrade em simulação segura."""
     stripped = command.strip()
     pattern = re.compile(
         r"^(?P<prefix>\s*(?:sudo\s+)?)"
@@ -1172,6 +1249,7 @@ def apt_simulation_command(command: str) -> str | None:
 
 
 def apt_simulation_commands(command: str) -> list[str]:
+    """Extrai simulações APT de comandos compostos separados por &&, ; ou ||."""
     segments = re.split(r"\s*(?:&&|;|\|\|)\s*", command.strip())
     simulations: list[str] = []
     for segment in segments:
@@ -1182,6 +1260,7 @@ def apt_simulation_commands(command: str) -> list[str]:
 
 
 def apt_simulation_reveals_removal(text: str) -> bool:
+    """Detecta se a simulação do APT pretende remover pacotes."""
     patterns = [
         r"(?m)^Os pacotes a seguir serão REMOVIDOS:",
         r"(?m)^The following packages will be REMOVED:",
@@ -1192,6 +1271,7 @@ def apt_simulation_reveals_removal(text: str) -> bool:
 
 
 def apt_plan_safety_reason(command: str) -> str | None:
+    """Roda simulação APT antes de permitir instalação/upgrade real."""
     simulations = apt_simulation_commands(command)
     if not simulations:
         return None
@@ -1220,6 +1300,7 @@ def apt_plan_safety_reason(command: str) -> str | None:
 
 
 def docker_status_failed(command: str, result: CommandResult) -> bool:
+    """Reconhece quando systemctl status docker mostra falha real do serviço."""
     normalized = " ".join(command.strip().split()).casefold()
     if "systemctl status docker" not in normalized:
         return False
@@ -1234,6 +1315,7 @@ def docker_status_failed(command: str, result: CommandResult) -> bool:
 
 
 def internal_read_command(command: str, timeout: float = 20, output_limit: int = 4000) -> CommandResult:
+    """Executa diagnóstico interno rápido sem pedir aprovação ao usuário."""
     append_log("internal_command", command)
     try:
         completed = subprocess.run(
@@ -1268,6 +1350,7 @@ def internal_read_command(command: str, timeout: float = 20, output_limit: int =
 
 
 def ask_approval(command: str) -> bool:
+    """Pede confirmação humana antes de comandos que podem alterar o sistema."""
     global AUTO_APPROVE
 
     if AUTO_APPROVE or looks_read_only(command):
@@ -1289,10 +1372,12 @@ def ask_approval(command: str) -> bool:
 
 
 def command_uses_sudo(command: str) -> bool:
+    """Detecta uso de sudo dentro do comando."""
     return bool(re.search(r"(^|[\s;&|])sudo(?:\s|$)", command, re.I))
 
 
 def sudo_is_ready() -> bool:
+    """Confere se sudo já está autenticado e pode rodar sem pedir senha agora."""
     try:
         completed = subprocess.run(
             ["sudo", "-n", "true"],
@@ -1310,6 +1395,8 @@ def needs_interactive_terminal(command: str) -> bool:
 
 
 SUDOERS_COMMANDS = [
+    # Lista restrita usada pelo /sudo setup para liberar manutenção sem senha.
+    # Mesmo com isso, as regras de bloqueio do executor continuam valendo.
     "/usr/bin/apt",
     "/usr/bin/apt-get",
     "/usr/bin/dpkg",
@@ -1346,6 +1433,7 @@ def clean_child_environment() -> dict[str, str]:
 
 
 def clip(text: str, limit: int) -> str:
+    """Limita saída grande mantendo começo e fim, para caber no prompt/log."""
     if len(text) <= limit:
         return text
 
@@ -1359,6 +1447,7 @@ def clip(text: str, limit: int) -> str:
 
 
 LONG_RUNNING_COMMANDS = re.compile(
+    # Comandos que normalmente baixam/instalam coisas e podem ficar minutos rodando.
     r"\b(?:"
     r"apt(?:-get)?\s+(?:update|install|upgrade|full-upgrade|dist-upgrade)|"
     r"flatpak\s+(?:install|update|repair)|"
@@ -1374,12 +1463,14 @@ LONG_RUNNING_COMMANDS = re.compile(
 
 
 def timeout_for_command(command: str, default_timeout: float) -> float:
+    """Escolhe timeout maior para comandos sabidamente demorados."""
     if LONG_RUNNING_COMMANDS.search(command):
         return max(default_timeout, LONG_COMMAND_TIMEOUT)
     return default_timeout
 
 
 def append_capture(current: str, text: str, limit: int) -> str:
+    """Acumula saída ao vivo sem deixar a memória crescer sem limite."""
     cap = max(limit * 2, limit + 1000)
     combined = current + text
     if len(combined) <= cap:
@@ -1394,6 +1485,7 @@ def append_capture(current: str, text: str, limit: int) -> str:
 
 
 def stop_process_tree(process: subprocess.Popen[Any]) -> None:
+    """Tenta encerrar o processo e seus filhos quando há timeout."""
     try:
         if hasattr(os, "killpg"):
             os.killpg(process.pid, signal.SIGTERM)
@@ -1411,6 +1503,7 @@ def stop_process_tree(process: subprocess.Popen[Any]) -> None:
 
 
 def run_captured_streaming(command: str, timeout: float, output_limit: int) -> CommandResult:
+    """Executa comando não interativo mostrando saída em tempo real."""
     effective_timeout = timeout_for_command(command, timeout)
     start = time.monotonic()
     last_output = start
@@ -1501,6 +1594,7 @@ def run_captured_streaming(command: str, timeout: float, output_limit: int) -> C
 
 
 def run_command(command: str, timeout: float, output_limit: int) -> CommandResult:
+    """Executor principal chamado pela ferramenta run_shell do modelo."""
     global WORKDIR
 
     append_log("command", command)
@@ -1576,12 +1670,14 @@ def run_command(command: str, timeout: float, output_limit: int) -> CommandResul
 
 
 def get_attr(obj: Any, name: str, default: Any = None) -> Any:
+    """Lê atributo tanto de objeto quanto de dict, para compatibilidade."""
     if isinstance(obj, dict):
         return obj.get(name, default)
     return getattr(obj, name, default)
 
 
 def fetch_url(url: str, method: str = "GET", max_bytes: int = 12000) -> dict[str, Any]:
+    """Ferramenta web simples: busca página pública e devolve texto limitado."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         return {"error": "apenas URLs http e https são permitidas"}
@@ -1646,6 +1742,7 @@ def fetch_url(url: str, method: str = "GET", max_bytes: int = 12000) -> dict[str
 
 
 def command_result_text(result: CommandResult) -> str:
+    """Serializa resultado de comando no formato que volta para o modelo."""
     return json.dumps(
         {
             "stdout": result.stdout,
@@ -1657,6 +1754,7 @@ def command_result_text(result: CommandResult) -> str:
     )
 
 
+# Padrões usados para detectar quando a IA está orientando demais em vez de agir.
 TOOL_NUDGE_PATTERNS = [
     re.compile(pattern, re.I)
     for pattern in (
@@ -1671,6 +1769,8 @@ TOOL_NUDGE_PATTERNS = [
     )
 ]
 
+# Comandos de diagnóstico seguros que o executor pode rodar automaticamente
+# quando o modelo escreveu "execute tal comando" em vez de chamar a ferramenta.
 PROBE_COMMAND_PATTERNS = [
     re.compile(pattern, re.I)
     for pattern in (
@@ -1687,6 +1787,7 @@ PROBE_COMMAND_PATTERNS = [
 
 
 def should_nudge_tool_use(text: str) -> bool:
+    """Detecta resposta textual que deveria ter usado run_shell."""
     normalized = text.strip()
     if not normalized:
         return False
@@ -1695,6 +1796,7 @@ def should_nudge_tool_use(text: str) -> bool:
 
 
 def extract_safe_probe_command(text: str) -> str | None:
+    """Extrai um comando de diagnóstico seguro de uma resposta textual da IA."""
     if not text.strip():
         return None
 
@@ -1717,6 +1819,7 @@ def extract_safe_probe_command(text: str) -> str | None:
 
 
 def refresh_sudo() -> None:
+    """Renova a sessão sudo pedindo senha diretamente no terminal local."""
     print("Vou pedir sua senha pelo sudo. Ela não será salva nem enviada para a IA.")
     try:
         completed = subprocess.run(["sudo", "-v"], cwd=str(WORKDIR))
@@ -1731,6 +1834,7 @@ def refresh_sudo() -> None:
 
 
 def setup_passwordless_sudo() -> None:
+    """Cria regra sudoers opcional para comandos de manutenção específicos."""
     user = os.environ.get("USER") or os.environ.get("LOGNAME")
     if not user:
         print("Erro: não consegui descobrir o usuário atual.")
@@ -1799,6 +1903,7 @@ def run_task(
     memory: list[str],
     user_text: str,
 ) -> None:
+    """Loop agente: manda pedido para a IA, executa ferramentas e continua."""
     global CURRENT_TASK_ID
     CURRENT_TASK_ID = f"task-{int(time.time())}"
     append_log("user", user_text)
@@ -1811,6 +1916,8 @@ def run_task(
     summary_nudges = 0
 
     for _step in range(1, MAX_STEPS + 1):
+        # Cada ciclo envia o histórico atual para a API. Se o modelo pedir
+        # ferramenta, executamos e devolvemos o resultado no próximo ciclo.
         try:
             messages = [
                 {
@@ -1849,6 +1956,9 @@ def run_task(
         history.append(message)
         tool_calls = message.get("tool_calls") or []
         if not tool_calls:
+            # Sem tool_calls significa que o modelo respondeu em texto. Antes de
+            # aceitar, tentamos corrigir casos em que ele só mandou o usuário
+            # rodar um comando que o próprio agente poderia executar.
             final_text = (message.get("content") or "").strip()
             if not final_text and summary_nudges < 2:
                 summary_nudges += 1
@@ -1904,6 +2014,9 @@ def run_task(
         should_prompt_validation = False
         should_prompt_docker_journal = False
         for call in tool_calls:
+            # Para cada ferramenta chamada pelo modelo, executamos localmente e
+            # acrescentamos uma mensagem role=tool com o resultado. Isso evita o
+            # erro da API de tool_call sem resposta correspondente.
             function = call.get("function") or {}
             result: CommandResult | None = None
             command = ""
@@ -1957,6 +2070,8 @@ def run_task(
                 should_prompt_validation = True
 
         if should_prompt_docker_journal:
+            # Caso especial: Docker falhou. O próximo passo útil quase sempre é
+            # ler journalctl, então o agente é empurrado para investigar.
             history.append(
                 {
                     "role": "user",
@@ -1970,6 +2085,8 @@ def run_task(
             continue
 
         if should_prompt_validation:
+            # Depois de uma mudança real, o agente deve validar em vez de encerrar
+            # cedo demais dizendo só "pronto".
             history.append(
                 {
                     "role": "user",
@@ -1985,6 +2102,7 @@ def run_task(
 
 
 def print_banner(provider: str, model: str, memory_count: int) -> None:
+    """Imprime o cabeçalho inicial com modo, modelo, caminhos e comandos."""
     mode = "automático" if AUTO_APPROVE else "confirma mudanças"
     self_mode = "ativa" if SELF_MODIFY else "desativada"
     print(colorize(APP_NAME, BOLD + COLOR_INFO))
@@ -2006,6 +2124,7 @@ def print_banner(provider: str, model: str, memory_count: int) -> None:
 
 
 def main() -> int:
+    """Entrada principal: parseia argumentos e abre o REPL do terminal."""
     global AUTO_APPROVE, SELF_MODIFY
 
     parser = argparse.ArgumentParser(description="Orpheus - computador de bordo inteligente para Linux")
@@ -2017,6 +2136,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.monitor:
+        # Modo observador: apenas lê ai.status.json e sai.
         print_monitor()
         return 0
 
@@ -2036,6 +2156,7 @@ def main() -> int:
         del api_key
 
     if args.self_modify == "on":
+        # Permissão de auto-programação pode vir do argumento ou do .env.
         SELF_MODIFY = True
     elif args.self_modify == "off":
         SELF_MODIFY = False
@@ -2051,6 +2172,8 @@ def main() -> int:
         run_task(client, model, prompt_template, history, memory, initial)
 
     while True:
+        # REPL principal: lê comandos internos (/mem, /logs etc.) ou envia texto
+        # normal para o agente resolver com API + ferramentas.
         try:
             text = input(colorize("\nVocê: ", COLOR_USER)).strip()
         except (EOFError, KeyboardInterrupt):
