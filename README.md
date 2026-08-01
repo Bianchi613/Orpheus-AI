@@ -131,6 +131,33 @@ Para baixar o modelo local:
 ollama pull qwen3:8b
 ```
 
+### Provedor Exclusivo
+
+O Orpheus usa um provedor por vez.
+
+```text
+AI_PROVIDER=openai -> usa API externa da OpenAI
+AI_PROVIDER=ollama -> usa Ollama local
+```
+
+Quando `AI_PROVIDER=openai`, o Ollama não faz parte do caminho de execução.
+
+Quando `AI_PROVIDER=ollama`, a API externa da OpenAI não é usada; o Orpheus conversa com o servidor local configurado em `OLLAMA_BASE_URL`.
+
+Se escolher Ollama local, use apenas um servidor Ollama na porta `127.0.0.1:11434`. Pode ser via serviço systemd ou via `ollama serve` manual, mas não os dois ao mesmo tempo.
+
+Se aparecer erro parecido com:
+
+```text
+listen tcp 127.0.0.1:11434: bind: address already in use
+```
+
+significa que já existe outro processo usando a porta do Ollama. O caminho correto, somente quando o provedor ativo for `ollama`, é:
+
+- identificar quem está usando `127.0.0.1:11434`;
+- parar uma das instâncias concorrentes;
+- manter apenas um servidor Ollama ativo.
+
 ## Variaveis Do Executor
 
 As principais opcoes do `.env.example` sao:

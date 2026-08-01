@@ -540,7 +540,7 @@ def collect_system_snapshot() -> dict[str, Any]:
         "ip": "hostname -I | awk '{print $1}'",
         "route": "ip route | grep '^default' | head -n1 | awk '{print $3}'",
         "wifi": "nmcli -t -f ACTIVE,SSID,SIGNAL dev wifi 2>/dev/null | grep '^yes:' | head -n1 | cut -d: -f2,3",
-        "docker": "docker info --format '{{.ServerVersion}}' 2>/dev/null",
+        "docker": "command -v docker >/dev/null 2>&1 && docker --version 2>/dev/null | awk '{print $3}' | tr -d ','",
         "battery": 'for d in /sys/class/power_supply/BAT*; do [ -d "$d" ] || continue; cat "$d/capacity" 2>/dev/null; echo; cat "$d/status" 2>/dev/null; break; done',
     }
 
