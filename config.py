@@ -16,7 +16,7 @@ from pathlib import Path
 WORKDIR = Path.cwd().resolve()
 
 # SCRIPT_DIR aponta para a raiz do projeto, onde ficam ai.py, .env e .ai_prompt.txt.
-SCRIPT_DIR = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 APP_VERSION = "2026.08.01.30"
 APP_NAME = "Orpheus"
@@ -24,7 +24,7 @@ APP_NAME = "Orpheus"
 # SESSION_ID identifica esta execução do agente.
 SESSION_ID = time.strftime("%Y%m%d-%H%M%S")
 
-# CURRENT_TASK_ID é atualizado pelo app.py quando uma tarefa nova começa.
+# CURRENT_TASK_ID é atualizado pelo ai.py quando uma tarefa nova começa.
 CURRENT_TASK_ID = "idle"
 
 RESET = "[0m"

@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from . import config as cfg
+import config as cfg
 
 WEB_FETCH_TOOL = {
     "type": "function",

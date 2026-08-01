@@ -8,24 +8,21 @@ O objetivo da divisao nao e deixar arquivos pequenos por estetica. A divisao exi
 
 ```text
 ai.py
-orpheus/
-  __init__.py
-  config.py
-  api.py
-  executor.py
-  state.py
-  app.py
+config.py
+api.py
+executor.py
+state.py
 ```
 
 Fluxo principal:
 
 ```text
 usuario
-  -> orpheus/app.py
-  -> orpheus/api.py
+  -> ai.py
+  -> api.py
   -> modelo OpenAI/Ollama
   -> ferramenta solicitada
-  -> orpheus/executor.py ou orpheus/state.py
+  -> executor.py ou state.py
   -> resultado volta ao modelo
   -> resposta final no terminal
 ```
@@ -34,16 +31,27 @@ usuario
 
 ### `ai.py`
 
-Entrada compatível do programa.
+Arquivo principal do programa.
 
-Ele deve continuar simples:
+Responsavel por:
 
-- importar `main`;
-- chamar `main()`;
+- carregar o prompt externo;
+- injetar memoria no prompt;
+- injetar permissao de auto-programacao no prompt;
+- abrir o REPL do terminal;
+- interpretar comandos internos;
+- manter historico da conversa;
+- chamar a API;
+- receber tool calls;
+- chamar executor/state/api conforme a ferramenta;
+- devolver resultados de ferramentas para o modelo;
+- evitar que a IA apenas oriente quando pode agir;
+- pedir clarificacao quando o pedido e ambiguo;
+- encerrar quando a tarefa termina;
 - preservar `python3 ai.py`;
 - preservar o atalho `ai`.
 
-### `orpheus/config.py`
+### `config.py`
 
 Configuração central.
 
@@ -72,7 +80,7 @@ Responsavel por:
 
 Quando precisar de uma configuracao global, coloque aqui.
 
-### `orpheus/api.py`
+### `api.py`
 
 Comunicação com modelos e busca web.
 
@@ -88,7 +96,7 @@ Responsavel por:
 
 Nao deve executar comandos locais. Isso fica em `executor.py`.
 
-### `orpheus/executor.py`
+### `executor.py`
 
 Executor local do terminal.
 
@@ -110,7 +118,7 @@ Responsavel por:
 
 Regra importante: toda acao real no sistema deve passar pelo executor.
 
-### `orpheus/state.py`
+### `state.py`
 
 Estado local do Orpheus.
 
@@ -140,27 +148,7 @@ Responsavel por:
 
 Arquivos de estado sao locais e nao devem subir para o GitHub.
 
-### `orpheus/app.py`
-
-Orquestração principal.
-
-Responsavel por:
-
-- carregar prompt externo;
-- injetar memoria no prompt;
-- injetar permissao de auto-programacao no prompt;
-- abrir o REPL do terminal;
-- interpretar comandos internos;
-- manter historico da conversa;
-- chamar a API;
-- receber tool calls;
-- chamar executor/state/api conforme a ferramenta;
-- devolver resultados de ferramentas para o modelo;
-- evitar que a IA apenas oriente quando pode agir;
-- pedir clarificacao quando o pedido e ambiguo;
-- encerrar quando a tarefa termina.
-
-Se uma mudanca envolve como o agente decide o proximo passo, provavelmente fica aqui.
+Se uma mudanca envolve como o agente decide o proximo passo, provavelmente fica em `ai.py`.
 
 ## Arquivos Locais Privados
 
@@ -189,7 +177,7 @@ Arquivos normais de auto-programacao:
 
 ```text
 ai.py
-orpheus/*.py
+config.py, api.py, executor.py e state.py
 .ai_prompt.txt
 .env.example
 README.md
@@ -212,7 +200,7 @@ senhas
 Depois de mexer no codigo:
 
 ```sh
-python3 -m py_compile ai.py orpheus/*.py
+python3 -m py_compile ai.py config.py api.py executor.py state.py
 python3 ai.py --help
 python3 ai.py --monitor
 printf '/exit\n' | python3 ai.py --provider ollama
@@ -230,5 +218,5 @@ git diff --check
 - Modelo, OpenAI, Ollama e HTTP publico: `api.py`.
 - Comandos locais, bloqueios e sudo: `executor.py`.
 - Memoria, logs, monitor, painel e baseline: `state.py`.
-- Loop do agente, prompt e comandos internos: `app.py`.
+- Loop do agente, prompt e comandos internos: `ai.py`.
 - Compatibilidade de entrada: `ai.py`.

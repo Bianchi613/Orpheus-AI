@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import config as cfg
-from . import state
+import config as cfg
+import state
 
 # Bloqueios absolutos. Nem AI_AUTO_APPROVE=1 ignora esta lista.
 BLOCK_RULES: list[tuple[re.Pattern[str], str]] = [

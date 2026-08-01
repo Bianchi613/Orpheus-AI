@@ -16,26 +16,26 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import config as cfg
+import config as cfg
 
 
 def _internal_read_command(command: str, timeout: float = 20, output_limit: int = 4000):
     """Importação tardia evita ciclo entre state.py e executor.py."""
-    from .executor import internal_read_command
+    from executor import internal_read_command
 
     return internal_read_command(command, timeout, output_limit)
 
 
 def _clean_child_environment() -> dict[str, str]:
     """Importação tardia do ambiente limpo usado por diagnósticos internos."""
-    from .executor import clean_child_environment
+    from executor import clean_child_environment
 
     return clean_child_environment()
 
 
 def _fetch_url(url: str, method: str = "GET", max_bytes: int = 12000) -> dict[str, Any]:
     """Importação tardia evita ciclo entre state.py e api.py."""
-    from .api import fetch_url
+    from api import fetch_url
 
     return fetch_url(url, method, max_bytes)
 

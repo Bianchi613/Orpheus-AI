@@ -1,1 +1,0 @@
-"""Pacote interno do Orpheus."""

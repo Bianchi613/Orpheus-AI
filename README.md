@@ -37,26 +37,23 @@ O programa foi separado por proposito real:
 
 ```text
 ai.py
-orpheus/
-  __init__.py
-  config.py
-  api.py
-  executor.py
-  state.py
-  app.py
+config.py
+api.py
+executor.py
+state.py
 ```
 
-- `ai.py` inicia o programa e mantém compatibilidade com `python3 ai.py` e com o atalho `ai`.
-- `orpheus/config.py` concentra `.env`, caminhos, versão, flags, timeouts, cores e estado mutavel da sessao.
-- `orpheus/api.py` conversa com OpenAI/Ollama e define ferramentas expostas ao modelo.
-- `orpheus/executor.py` executa comandos no terminal com confirmacao, bloqueios, sudo, streaming e watchdog.
-- `orpheus/state.py` cuida de memoria, log, status vivo, baseline, monitor e painel textual.
-- `orpheus/app.py` orquestra o loop principal, comandos internos, prompt, historico, memoria e chamadas de ferramenta.
+- `ai.py` é o arquivo principal: abre o terminal, interpreta comandos internos, conversa com a IA e mantém compatibilidade com `python3 ai.py` e com o atalho `ai`.
+- `config.py` concentra `.env`, caminhos, versão, flags, timeouts, cores e estado mutavel da sessao.
+- `api.py` conversa com OpenAI/Ollama e define ferramentas expostas ao modelo.
+- `executor.py` executa comandos no terminal com confirmacao, bloqueios, sudo, streaming e watchdog.
+- `state.py` cuida de memoria, log, status vivo, baseline, monitor e painel textual.
+- `ai.py` orquestra o loop principal, comandos internos, prompt, historico, memoria e chamadas de ferramenta.
 
 Resumo do fluxo:
 
 ```text
-usuario -> app.py -> api.py -> modelo -> executor.py/state.py -> app.py -> modelo -> resposta final
+usuario -> ai.py -> api.py -> modelo -> executor.py/state.py -> ai.py -> modelo -> resposta final
 ```
 
 ## Instalacao
@@ -274,12 +271,12 @@ Comandos:
 Depois de mexer no codigo, o agente deve validar com:
 
 ```sh
-python3 -m py_compile ai.py orpheus/*.py
+python3 -m py_compile ai.py config.py api.py executor.py state.py
 ```
 
 Ele nao deve ler nem revelar `.env`, chaves, tokens ou senhas.
 
-O prompt operacional fica fora do codigo, em `.ai_prompt.txt`. O modulo `orpheus/app.py` carrega esse prompt e injeta variaveis como pasta atual, memoria e estado de auto-programacao.
+O prompt operacional fica fora do codigo, em `.ai_prompt.txt`. O modulo `ai.py` carrega esse prompt e injeta variaveis como pasta atual, memoria e estado de auto-programacao.
 
 ## Seguranca
 
@@ -352,12 +349,11 @@ Web e logs:
 
 ## Arquivos Do Projeto
 
-- `ai.py`: entrada do programa; chama `orpheus.app.main()` e mantém `python3 ai.py` funcionando;
-- `orpheus/config.py`: `.env`, caminhos, versão, flags, timeouts, cores e estado mutável da sessão;
-- `orpheus/api.py`: cliente OpenAI/Ollama, ferramentas expostas ao modelo e busca HTTP/HTTPS pública;
-- `orpheus/executor.py`: execução de comandos, sudo, confirmação humana, bloqueios, simulação APT, watchdog e saída em tempo real;
-- `orpheus/state.py`: memória, logs, status vivo, baseline, monitor e painel textual do sistema;
-- `orpheus/app.py`: loop principal, comandos internos, prompt e orquestração entre API, executor e estado;
+- `ai.py`: arquivo principal; abre o REPL, carrega prompt, mantém histórico, interpreta comandos internos e orquestra API, executor e estado;
+- `config.py`: `.env`, caminhos, versão, flags, timeouts, cores e estado mutável da sessão;
+- `api.py`: cliente OpenAI/Ollama, ferramentas expostas ao modelo e busca HTTP/HTTPS pública;
+- `executor.py`: execução de comandos, sudo, confirmação humana, bloqueios, simulação APT, watchdog e saída em tempo real;
+- `state.py`: memória, logs, status vivo, baseline, monitor e painel textual do sistema;
 - `.ai_prompt.txt`: prompt operacional externo;
 - `.env.example`: exemplo de configuracao;
 - `.env`: configuracao local, nao deve ser compartilhada;
@@ -393,7 +389,7 @@ Arquivos locais ignorados pelo git:
 Depois de alterar codigo, rode:
 
 ```sh
-python3 -m py_compile ai.py orpheus/*.py
+python3 -m py_compile ai.py config.py api.py executor.py state.py
 python3 ai.py --help
 python3 ai.py --monitor
 ```
