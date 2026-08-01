@@ -90,7 +90,7 @@ As principais opcoes do `.env.example` sao:
 AI_AUTO_APPROVE=0
 AI_SELF_MODIFY=0
 AI_MAX_STEPS=30
-AI_COMMAND_TIMEOUT=60
+AI_COMMAND_TIMEOUT=300
 AI_MAX_OUTPUT=12000
 AI_PROMPT_FILE=
 ```
@@ -98,6 +98,8 @@ AI_PROMPT_FILE=
 `AI_AUTO_APPROVE=1` executa automaticamente comandos permitidos. Comandos perigosos continuam bloqueados.
 
 `AI_SELF_MODIFY=1` permite que o agente altere seus proprios arquivos quando voce pedir para corrigir ou melhorar o agente.
+
+`AI_COMMAND_TIMEOUT=300` evita que downloads grandes sejam cortados cedo demais.
 
 `AI_PROMPT_FILE` permite apontar para outro prompt. Se ficar vazio, ele usa `.ai_prompt.txt` ao lado do `ai.py`.
 

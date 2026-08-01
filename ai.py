@@ -67,7 +67,7 @@ from typing import Any
 
 WORKDIR = Path.cwd().resolve()
 SCRIPT_DIR = Path(__file__).resolve().parent
-APP_VERSION = "2026.08.01.26"
+APP_VERSION = "2026.08.01.27"
 APP_NAME = "Orpheus"
 
 WEB_FETCH_TOOL = {
@@ -947,7 +947,7 @@ READ_ONLY_PREFIXES = {
     "docker", "podman", "git", "python", "python3", "pytest", "node", "npm",
     "ollama", "curl", "wget", "grep", "rg", "find", "locate", "which",
     "whereis", "type", "command", "readlink", "realpath", "cat", "head",
-    "lsb_release", "dpkg", "apt-cache", "printf", "true",
+    "lsb_release", "dpkg", "apt", "apt-cache", "printf", "true",
     "tail", "less", "more", "wc", "sort", "uniq", "cut", "awk", "sed",
 }
 
@@ -1031,6 +1031,8 @@ def looks_read_only(command: str) -> bool:
 
         program = first_program(piece)
         if program not in READ_ONLY_PREFIXES:
+            return False
+        if program == "apt" and not re.search(r"\bapt\s+list\b", piece, re.I):
             return False
         if STATE_CHANGING_WORDS.search(piece):
             return False
