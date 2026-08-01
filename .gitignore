@@ -2,6 +2,8 @@
 .ai_memory.json
 .orpheus_baseline.json
 ai.log
+*.log
+logs/
 __pycache__/
 *.py[cod]
 
