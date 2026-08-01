@@ -234,9 +234,19 @@ def is_important_memory(text: str) -> bool:
     cleaned = " ".join(text.strip().split())
     if not cleaned or len(cleaned) < 8:
         return False
+    if is_invalid_memory_item(cleaned):
+        return False
     if any(pattern.search(cleaned) for pattern in MEMORY_IGNORE_PATTERNS):
         return False
     return any(pattern.search(cleaned) for pattern, _tag in MEMORY_IMPORTANCE_RULES)
+
+
+def is_invalid_memory_item(text: str) -> bool:
+    """Bloqueia fatos persistentes que parecem template/código quebrado."""
+    return bool(
+        re.search(r"\{[^{}]*\}", text)
+        or re.search(r"\b[a-zA-Z_][a-zA-Z0-9_]*\.group\(\d+\)", text)
+    )
 
 
 def classify_memory_item(text: str) -> str:
@@ -283,6 +293,8 @@ def add_memory_items(memory: list[str], items: list[str], force: bool = False) -
 
     for item in items:
         cleaned = " ".join(item.strip().split())
+        if is_invalid_memory_item(cleaned):
+            continue
         if not force and not is_important_memory(cleaned):
             continue
         key = canonical_memory_key(cleaned)

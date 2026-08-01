@@ -216,6 +216,8 @@ A memoria manual salva qualquer frase valida. A memoria automatica salva apenas 
 
 Quando a memoria nova tem o mesmo tipo de uma memoria antiga, o Orpheus substitui o fato anterior em vez de guardar duplicado. Exemplo: se o sistema operacional ou estado do Docker mudar, a memoria mais nova fica no lugar da antiga.
 
+Memorias que parecem template/codigo quebrado, como placeholders com `{...}` ou chamadas `.group(...)`, sao ignoradas para evitar fatos persistentes invalidos.
+
 Perguntas ambiguas como "esta funcionando?" nao devem fazer o agente assumir automaticamente Docker, internet ou outro alvo salvo na memoria. Nesses casos ele deve pedir uma clarificacao objetiva.
 
 O arquivo `.ai_memory.json` e local e esta no `.gitignore`. Ele nao deve ser enviado para o GitHub.

@@ -128,6 +128,7 @@ Responsavel por:
 - sanitizacao simples de segredos no log;
 - memoria persistente `.ai_memory.json`;
 - substituicao de memorias antigas do mesmo tipo;
+- filtro contra memorias que parecem template/codigo quebrado;
 - inferencia automatica de memorias a partir de texto do usuario;
 - inferencia automatica de memorias a partir de comandos bem-sucedidos;
 - status vivo `ai.status.json`;
