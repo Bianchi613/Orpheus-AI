@@ -4,7 +4,7 @@ Orpheus e um assistente de IA para operar o terminal Linux local. Ele conversa e
 
 O projeto usa somente a biblioteca padrao do Python. Nao ha dependencias Python em `pip install -r requirements.txt`.
 
-Versao atual no codigo: `2026.08.01.26`.
+Versao atual no codigo: `2026.08.01.30`.
 
 ## O Que Ele Faz
 
@@ -16,9 +16,15 @@ Versao atual no codigo: `2026.08.01.26`.
 - salva memoria persistente em JSON;
 - pode consultar URLs publicas com `/web`;
 - mostra painel de bordo do sistema;
+- grava status vivo em `ai.status.json`;
+- permite acompanhar o agente com `--monitor`, `/monitor` e `/monitor watch N`;
+- mostra saida dos comandos em tempo real;
+- avisa quando um comando fica sem nova saida;
+- usa timeout maior para instaladores e downloads demorados;
 - registra eventos em log local;
 - compara o estado atual com um baseline;
-- pode se auto-programar quando essa opcao estiver ativa.
+- pode se auto-programar quando essa opcao estiver ativa;
+- possui comentarios no codigo explicando os blocos principais.
 
 ## Instalacao
 
@@ -109,6 +115,14 @@ AI_PROMPT_FILE=
 
 `AI_PROMPT_FILE` permite apontar para outro prompt. Se ficar vazio, ele usa `.ai_prompt.txt` ao lado do `ai.py`.
 
+Tambem existem variaveis opcionais para trocar os caminhos dos arquivos locais:
+
+```env
+AI_MEMORY_FILE=/caminho/para/.ai_memory.json
+AI_LOG_FILE=/caminho/para/ai.log
+AI_STATE_FILE=/caminho/para/ai.status.json
+```
+
 ## Como Rodar
 
 Direto:
@@ -130,6 +144,12 @@ python3 ai.py --provider openai
 python3 ai.py --provider ollama
 ```
 
+Modo monitor, para ver o estado vivo gravado pelo agente:
+
+```sh
+python3 ai.py --monitor
+```
+
 Se o atalho estiver instalado, use:
 
 ```sh
@@ -147,6 +167,40 @@ Comandos:
 - `/forget N` remove o item numero `N`.
 
 A memoria manual salva qualquer frase valida. A memoria automatica salva apenas fatos considerados uteis, como sistema operacional, preferencias, Docker instalado, servico do Docker, grupo `docker`, provedor desejado e auto-programacao.
+
+O arquivo `.ai_memory.json` e local e esta no `.gitignore`. Ele nao deve ser enviado para o GitHub.
+
+## Monitor E Status Vivo
+
+O Orpheus grava o estado atual em `ai.status.json`, ou no caminho definido por `AI_STATE_FILE`.
+
+Esse arquivo mostra informacoes como:
+
+- versao do agente;
+- ID da sessao;
+- ID da tarefa atual;
+- PID do processo;
+- pasta atual;
+- estado atual, como `idle`, `api_wait`, `running_command`, `command_finished`, `completed` ou `stopped`;
+- resumo curto;
+- horario da ultima atualizacao.
+
+Formas de consultar:
+
+```sh
+python3 ai.py --monitor
+```
+
+Dentro do agente:
+
+```text
+/monitor
+/monitor watch 2
+```
+
+`/monitor watch N` reexibe o status a cada `N` segundos.
+
+O `ai.status.json` tambem e local e esta no `.gitignore`.
 
 ## Auto-Programacao
 
@@ -172,6 +226,8 @@ python3 -m py_compile ai.py
 
 Ele nao deve ler nem revelar `.env`, chaves, tokens ou senhas.
 
+O prompt operacional fica fora do codigo, em `.ai_prompt.txt`. O `ai.py` apenas carrega esse prompt e injeta variaveis como pasta atual, memoria e estado de auto-programacao.
+
 ## Seguranca
 
 Bloqueios permanentes:
@@ -187,6 +243,15 @@ Bloqueios permanentes:
 Comandos que alteram estado pedem confirmacao. Comandos de leitura normalmente rodam direto.
 
 `sudo` e permitido quando necessario, mas a senha e digitada no terminal e nao e enviada para a IA.
+
+Antes de executar instalacoes ou upgrades por APT, o executor tenta simular o plano para detectar remocoes de pacotes. Se a simulacao indicar remocao, o comando e bloqueado.
+
+Para comandos demorados, o executor usa saida em tempo real e watchdog:
+
+- comandos comuns usam `AI_COMMAND_TIMEOUT`;
+- instaladores/downloads usam `AI_LONG_COMMAND_TIMEOUT`;
+- se nao houver nova saida por `AI_IDLE_TIMEOUT`, o terminal mostra um aviso;
+- se o timeout total acabar, o processo e interrompido e a IA recebe o resultado como timeout para tentar outro caminho.
 
 ## Comandos Internos
 
@@ -216,7 +281,9 @@ Comandos de bordo:
 - `/alerts` mostra alertas atuais;
 - `/health` executa checagens simples;
 - `/incident` resume o estado atual e o proximo passo;
-- `/watch N` repete o painel a cada `N` segundos.
+- `/watch N` repete o painel a cada `N` segundos;
+- `/monitor` mostra o status vivo atual;
+- `/monitor watch N` acompanha o status vivo a cada `N` segundos.
 
 Baseline:
 
@@ -238,8 +305,22 @@ Web e logs:
 - `.env`: configuracao local, nao deve ser compartilhada;
 - `.ai_memory.json`: memoria persistente;
 - `.orpheus_baseline.json`: baseline local criado por `/baseline`;
+- `ai.status.json`: status vivo local do agente;
 - `ai.log`: log local do agente;
 - `system-requirements.txt`: pacotes de sistema.
+
+Arquivos locais ignorados pelo git:
+
+- `.env`;
+- `.ai_memory.json`;
+- `.orpheus_baseline.json`;
+- `ai.status.json`;
+- `ai.log`;
+- `*.log`;
+- `logs/`;
+- `.local-backups/`;
+- `.local-trash/`;
+- `__pycache__/`.
 
 ## Observacoes
 
