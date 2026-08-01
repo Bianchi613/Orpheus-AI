@@ -221,12 +221,12 @@ Comandos:
 Depois de mexer no codigo, o agente deve validar com:
 
 ```sh
-python3 -m py_compile ai.py
+python3 -m py_compile ai.py orpheus/*.py
 ```
 
 Ele nao deve ler nem revelar `.env`, chaves, tokens ou senhas.
 
-O prompt operacional fica fora do codigo, em `.ai_prompt.txt`. O `ai.py` apenas carrega esse prompt e injeta variaveis como pasta atual, memoria e estado de auto-programacao.
+O prompt operacional fica fora do codigo, em `.ai_prompt.txt`. O modulo `orpheus/app.py` carrega esse prompt e injeta variaveis como pasta atual, memoria e estado de auto-programacao.
 
 ## Seguranca
 
@@ -299,7 +299,12 @@ Web e logs:
 
 ## Arquivos Do Projeto
 
-- `ai.py`: programa principal;
+- `ai.py`: entrada do programa; chama `orpheus.app.main()` e mantém `python3 ai.py` funcionando;
+- `orpheus/config.py`: `.env`, caminhos, versão, flags, timeouts, cores e estado mutável da sessão;
+- `orpheus/api.py`: cliente OpenAI/Ollama, ferramentas expostas ao modelo e busca HTTP/HTTPS pública;
+- `orpheus/executor.py`: execução de comandos, sudo, confirmação humana, bloqueios, simulação APT, watchdog e saída em tempo real;
+- `orpheus/state.py`: memória, logs, status vivo, baseline, monitor e painel textual do sistema;
+- `orpheus/app.py`: loop principal, comandos internos, prompt e orquestração entre API, executor e estado;
 - `.ai_prompt.txt`: prompt operacional externo;
 - `.env.example`: exemplo de configuracao;
 - `.env`: configuracao local, nao deve ser compartilhada;
