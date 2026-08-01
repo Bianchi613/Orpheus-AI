@@ -91,7 +91,7 @@ BLOCK_RULES: list[tuple[re.Pattern[str], str]] = [
     # Proteção de segredos e do processo pai.
     (re.compile(r"/proc/(?:self|\d+|\$PPID)/environ", re.I),
      "leitura do ambiente de processos é proibida"),
-    (re.compile(r"\b(?:cat|less|more|head|tail|sed|grep)\b[^\n]*(?:\.env\b|credentials|"
+    (re.compile(r"\b(?:cat|less|more|head|tail|sed|grep)\b[^\n]*(?:credentials|"
                 r"\.aws/|\.ssh/|keyring|secrets?)", re.I),
      "leitura de credenciais ou segredos é proibida"),
 ]
@@ -132,6 +132,8 @@ class CommandResult:
 def blocked_reason(command: str) -> str | None:
     """Retorna o motivo de bloqueio quando o comando viola regra permanente."""
     normalized = command.strip()
+    if reads_real_env_file(normalized):
+        return "leitura de credenciais ou segredos é proibida"
     for pattern, reason in BLOCK_RULES:
         if pattern.search(normalized):
             return reason
@@ -139,6 +141,29 @@ def blocked_reason(command: str) -> str | None:
     if compound_reason:
         return compound_reason
     return None
+
+
+def reads_real_env_file(command: str) -> bool:
+    """Bloqueia leitura de .env real, mas permite arquivos de exemplo."""
+    if not re.search(r"\b(?:cat|less|more|head|tail|sed|grep)\b", command, re.I):
+        return False
+
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return bool(re.search(r"(^|/)\.env(?:\s|$)", command))
+
+    for token in tokens:
+        cleaned = token.strip()
+        if not cleaned or cleaned.startswith("-"):
+            continue
+        name = Path(cleaned).name
+        if name == ".env":
+            return True
+        if name.startswith(".env.") and name != ".env.example":
+            return True
+
+    return False
 
 
 def first_program(command: str) -> str:

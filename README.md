@@ -323,6 +323,8 @@ Comandos que alteram estado pedem confirmacao. Comandos de leitura normalmente r
 
 `sudo` e permitido quando necessario, mas a senha e digitada no terminal e nao e enviada para a IA.
 
+O executor bloqueia leitura de `.env` real e arquivos de credenciais. Arquivos de exemplo, como `.env.example`, podem ser lidos e editados porque não devem conter segredo real.
+
 Antes de executar instalacoes ou upgrades por APT, o executor tenta simular o plano para detectar remocoes de pacotes. Se a simulacao indicar remocao, o comando e bloqueado.
 
 Para comandos demorados, o executor usa saida em tempo real e watchdog:

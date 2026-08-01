@@ -107,6 +107,7 @@ Responsavel por:
 - permitir leitura direta quando o comando parece seguro;
 - bloquear acoes destrutivas;
 - bloquear leitura de segredos;
+- permitir leitura de `.env.example` sem permitir leitura de `.env` real;
 - lidar com `sudo`;
 - configurar `/sudo setup`;
 - simular APT antes de instalacao/upgrade;
