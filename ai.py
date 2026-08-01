@@ -14,7 +14,9 @@ Requisitos:
 Configuração:
     Crie um arquivo .env ao lado deste script (veja .env.example).
     export AI_AUTO_APPROVE="1"             # opcional: executa comandos permitidos sem confirmar
-    export AI_COMMAND_TIMEOUT="60"          # opcional: segundos por comando
+    export AI_COMMAND_TIMEOUT="300"         # opcional: segundos por comando
+    export AI_LONG_COMMAND_TIMEOUT="900"    # opcional: segundos para instaladores/downloads
+    export AI_IDLE_TIMEOUT="45"             # opcional: avisa quando o comando fica sem saída
 
 Uso:
     python3 ai.py
@@ -53,7 +55,9 @@ import os
 import argparse
 import json
 import re
+import selectors
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -67,7 +71,7 @@ from typing import Any
 
 WORKDIR = Path.cwd().resolve()
 SCRIPT_DIR = Path(__file__).resolve().parent
-APP_VERSION = "2026.08.01.27"
+APP_VERSION = "2026.08.01.28"
 APP_NAME = "Orpheus"
 
 WEB_FETCH_TOOL = {
@@ -859,6 +863,8 @@ LOG_PATH = Path(os.environ.get("AI_LOG_FILE", SCRIPT_DIR / "ai.log")).expanduser
 
 MAX_STEPS = int(os.environ.get("AI_MAX_STEPS", "30"))
 DEFAULT_TIMEOUT = float(os.environ.get("AI_COMMAND_TIMEOUT", "60"))
+LONG_COMMAND_TIMEOUT = float(os.environ.get("AI_LONG_COMMAND_TIMEOUT", "900"))
+IDLE_TIMEOUT = float(os.environ.get("AI_IDLE_TIMEOUT", "45"))
 MAX_CAPTURE = int(os.environ.get("AI_MAX_OUTPUT", "12000"))
 AUTO_APPROVE = os.environ.get("AI_AUTO_APPROVE", "0") == "1"
 SELF_MODIFY = os.environ.get("AI_SELF_MODIFY", "0") == "1"
@@ -1292,6 +1298,143 @@ def clip(text: str, limit: int) -> str:
     )
 
 
+LONG_RUNNING_COMMANDS = re.compile(
+    r"\b(?:"
+    r"apt(?:-get)?\s+(?:update|install|upgrade|full-upgrade|dist-upgrade)|"
+    r"flatpak\s+(?:install|update|repair)|"
+    r"snap\s+(?:install|refresh)|"
+    r"ollama\s+pull|"
+    r"docker\s+(?:pull|build|compose\s+build)|"
+    r"npm\s+(?:install|ci)|"
+    r"pip(?:3)?\s+install|"
+    r"python3?\s+-m\s+pip\s+install"
+    r")\b",
+    re.I,
+)
+
+
+def timeout_for_command(command: str, default_timeout: float) -> float:
+    if LONG_RUNNING_COMMANDS.search(command):
+        return max(default_timeout, LONG_COMMAND_TIMEOUT)
+    return default_timeout
+
+
+def append_capture(current: str, text: str, limit: int) -> str:
+    cap = max(limit * 2, limit + 1000)
+    combined = current + text
+    if len(combined) <= cap:
+        return combined
+
+    keep = max(1, (cap - 120) // 2)
+    return (
+        combined[:keep]
+        + "\n\n... [saída omitida durante captura ao vivo] ...\n\n"
+        + combined[-keep:]
+    )
+
+
+def stop_process_tree(process: subprocess.Popen[Any]) -> None:
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+        process.wait(timeout=5)
+    except Exception:
+        try:
+            if hasattr(os, "killpg"):
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except Exception:
+            pass
+
+
+def run_captured_streaming(command: str, timeout: float, output_limit: int) -> CommandResult:
+    effective_timeout = timeout_for_command(command, timeout)
+    start = time.monotonic()
+    last_output = start
+    last_idle_notice = start
+    captured = ""
+    notices: list[str] = []
+
+    process = subprocess.Popen(
+        command,
+        shell=True,
+        executable="/bin/bash",
+        cwd=str(WORKDIR),
+        env=clean_child_environment(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+    )
+
+    selector = selectors.DefaultSelector()
+    assert process.stdout is not None
+    fd = process.stdout.fileno()
+    os.set_blocking(fd, False)
+    selector.register(fd, selectors.EVENT_READ)
+
+    try:
+        while True:
+            now = time.monotonic()
+
+            if now - start > effective_timeout:
+                message = f"TIMEOUT: comando excedeu {effective_timeout:.0f}s e foi interrompido pelo executor."
+                print(f"\n[{message}]")
+                notices.append(message)
+                stop_process_tree(process)
+                stdout = clip(captured, output_limit)
+                stderr = "\n".join(notices)
+                return CommandResult(stdout, stderr, None, True)
+
+            if IDLE_TIMEOUT > 0 and now - last_output >= IDLE_TIMEOUT and now - last_idle_notice >= IDLE_TIMEOUT:
+                message = f"sem nova saída há {IDLE_TIMEOUT:.0f}s; comando ainda está rodando..."
+                print(f"\n[{message}]", flush=True)
+                notices.append(message)
+                last_idle_notice = now
+
+            events = selector.select(timeout=1)
+            if events:
+                for key, _ in events:
+                    try:
+                        chunk = os.read(key.fd, 4096)
+                    except BlockingIOError:
+                        continue
+
+                    if not chunk:
+                        try:
+                            selector.unregister(key.fd)
+                        except Exception:
+                            pass
+                        continue
+
+                    text = chunk.decode(errors="replace")
+                    captured = append_capture(captured, text, output_limit)
+                    print(text, end="", flush=True)
+                    last_output = time.monotonic()
+
+            if process.poll() is not None:
+                while True:
+                    try:
+                        chunk = os.read(fd, 4096)
+                    except BlockingIOError:
+                        break
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    text = chunk.decode(errors="replace")
+                    captured = append_capture(captured, text, output_limit)
+                    print(text, end="", flush=True)
+
+                stdout = clip(captured, output_limit)
+                stderr = "\n".join(notices)
+                return CommandResult(stdout, stderr, process.returncode, False)
+    finally:
+        selector.close()
+
+
 def run_command(command: str, timeout: float, output_limit: int) -> CommandResult:
     global WORKDIR
 
@@ -1330,7 +1473,7 @@ def run_command(command: str, timeout: float, output_limit: int) -> CommandResul
                 executable="/bin/bash",
                 cwd=str(WORKDIR),
                 env=clean_child_environment(),
-                timeout=timeout,
+                timeout=timeout_for_command(command, timeout),
             )
             print(f"[código de saída: {completed.returncode}]")
             result = CommandResult(
@@ -1342,28 +1485,8 @@ def run_command(command: str, timeout: float, output_limit: int) -> CommandResul
             append_log("interactive_result", json.dumps({"exit_code": result.exit_code, "stderr": result.stderr}, ensure_ascii=False))
             return result
 
-        completed = subprocess.run(
-            command,
-            shell=True,
-            executable="/bin/bash",
-            cwd=str(WORKDIR),
-            env=clean_child_environment(),
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            errors="replace",
-        )
-
-        stdout = clip(completed.stdout or "", output_limit)
-        stderr = clip(completed.stderr or "", output_limit)
-
-        if stdout:
-            print(stdout, end="" if stdout.endswith("\n") else "\n")
-        if stderr:
-            print(stderr, end="" if stderr.endswith("\n") else "\n", file=sys.stderr)
-
-        print(f"[código de saída: {completed.returncode}]")
-        result = CommandResult(stdout, stderr, completed.returncode, False)
+        result = run_captured_streaming(command, timeout, output_limit)
+        print(f"[código de saída: {result.exit_code if result.exit_code is not None else 'timeout'}]")
         append_log("result", json.dumps({"exit_code": result.exit_code, "stdout": result.stdout, "stderr": result.stderr}, ensure_ascii=False))
         return result
 

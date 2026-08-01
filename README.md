@@ -91,6 +91,8 @@ AI_AUTO_APPROVE=0
 AI_SELF_MODIFY=0
 AI_MAX_STEPS=30
 AI_COMMAND_TIMEOUT=300
+AI_LONG_COMMAND_TIMEOUT=900
+AI_IDLE_TIMEOUT=45
 AI_MAX_OUTPUT=12000
 AI_PROMPT_FILE=
 ```
@@ -100,6 +102,10 @@ AI_PROMPT_FILE=
 `AI_SELF_MODIFY=1` permite que o agente altere seus proprios arquivos quando voce pedir para corrigir ou melhorar o agente.
 
 `AI_COMMAND_TIMEOUT=300` evita que downloads grandes sejam cortados cedo demais.
+
+`AI_LONG_COMMAND_TIMEOUT=900` dá mais tempo para instaladores e downloads como `apt`, `flatpak`, `snap`, `ollama pull` e `docker pull`.
+
+`AI_IDLE_TIMEOUT=45` faz o executor avisar quando um comando fica muito tempo sem produzir saída, sem matar o comando antes do timeout total.
 
 `AI_PROMPT_FILE` permite apontar para outro prompt. Se ficar vazio, ele usa `.ai_prompt.txt` ao lado do `ai.py`.
 
