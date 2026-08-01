@@ -276,22 +276,30 @@ def select_relevant_memory(items: list[str], limit: int = 12) -> list[str]:
 
 
 def add_memory_items(memory: list[str], items: list[str], force: bool = False) -> list[str]:
-    """Adiciona memórias novas, evita duplicatas e salva no disco."""
+    """Adiciona ou substitui memórias novas, evita duplicatas e salva no disco."""
     added: list[str] = []
-    seen = {canonical_memory_key(item) for item in memory}
+    changed = False
+    index_by_key = {canonical_memory_key(item): idx for idx, item in enumerate(memory)}
 
     for item in items:
         cleaned = " ".join(item.strip().split())
         if not force and not is_important_memory(cleaned):
             continue
         key = canonical_memory_key(cleaned)
-        if key in seen:
+        existing_index = index_by_key.get(key)
+        if existing_index is not None:
+            if normalize_memory_item(memory[existing_index]) == normalize_memory_item(cleaned):
+                continue
+            memory[existing_index] = cleaned
+            added.append(cleaned)
+            changed = True
             continue
         memory.append(cleaned)
-        seen.add(key)
+        index_by_key[key] = len(memory) - 1
         added.append(cleaned)
+        changed = True
 
-    if added:
+    if changed:
         memory[:] = sorted(memory, key=memory_priority)
         save_memory(memory)
 
@@ -326,6 +334,17 @@ def infer_memory_from_user_text(text: str) -> list[str]:
     normalized = " ".join(text.strip().split())
     lowered = normalized.casefold()
     items: list[str] = []
+
+    if any(phrase in lowered for phrase in (
+        "está funcionando",
+        "esta funcionando",
+        "ta funcionando",
+        "tá funcionando",
+        "funciona?",
+        "está funcinando",
+        "esta funcinando",
+    )):
+        items.append("quando o usuário perguntar se algo está funcionando sem contexto explícito, devo pedir clarificação antes de assumir o alvo")
 
     if (
         "aja direto no terminal" in lowered

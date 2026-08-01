@@ -152,6 +152,24 @@ def run_task(
     remembered_from_user = state.add_memory_items(memory, state.infer_memory_from_user_text(user_text))
     for item in remembered_from_user:
         print(f"Memória atualizada: {item}")
+
+    ambiguous_working_query = False
+    lowered_user_text = " ".join(user_text.strip().split()).casefold()
+    if any(phrase in lowered_user_text for phrase in (
+        "está funcionando",
+        "esta funcionando",
+        "ta funcionando",
+        "tá funcionando",
+        "funciona?",
+        "está funcinando",
+        "esta funcinando",
+    )):
+        explicit_targets = (
+            " você", " vc", " tu", "docker", "internet", "wifi", "wi-fi", "bluetooth",
+            "áudio", "audio", "microfone", "impressora", "site", "servidor", "serviço",
+            "servico", "app", "programa"
+        )
+        ambiguous_working_query = not any(token in lowered_user_text for token in explicit_targets)
     tool_nudges = 0
     summary_nudges = 0
 
@@ -232,6 +250,20 @@ def run_task(
                     }
                 )
                 tool_nudges += 1
+                continue
+            if ambiguous_working_query and summary_nudges < 2:
+                summary_nudges += 1
+                history.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "O pedido do usuário está ambíguo: ele perguntou se algo está funcionando, "
+                            "mas não disse o alvo. Não assuma Docker nem outro componente por memória. "
+                            "Responda apenas pedindo clarificação objetiva do alvo. Se o usuário falar de você, "
+                            "responda sobre seu próprio estado em vez de inferir outro sistema."
+                        ),
+                    }
+                )
                 continue
             if should_nudge_tool_use(final_text) and tool_nudges < 4:
                 tool_nudges += 1

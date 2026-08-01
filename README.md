@@ -6,6 +6,10 @@ O projeto usa somente a biblioteca padrao do Python. Nao ha dependencias Python 
 
 Versao atual no codigo: `2026.08.01.30`.
 
+Documentacao complementar:
+
+- `ARCHITECTURE.md`: explica a organizacao interna por modulos e o fluxo do agente.
+
 ## O Que Ele Faz
 
 - conversa diretamente no terminal, sem interface grafica;
@@ -24,7 +28,36 @@ Versao atual no codigo: `2026.08.01.30`.
 - registra eventos em log local;
 - compara o estado atual com um baseline;
 - pode se auto-programar quando essa opcao estiver ativa;
-- possui comentarios no codigo explicando os blocos principais.
+- possui comentarios no codigo explicando os blocos principais;
+- evita assumir o alvo quando o usuario pergunta algo ambiguo como "esta funcionando?".
+
+## Arquitetura Em Partes
+
+O programa foi separado por proposito real:
+
+```text
+ai.py
+orpheus/
+  __init__.py
+  config.py
+  api.py
+  executor.py
+  state.py
+  app.py
+```
+
+- `ai.py` inicia o programa e mantém compatibilidade com `python3 ai.py` e com o atalho `ai`.
+- `orpheus/config.py` concentra `.env`, caminhos, versão, flags, timeouts, cores e estado mutavel da sessao.
+- `orpheus/api.py` conversa com OpenAI/Ollama e define ferramentas expostas ao modelo.
+- `orpheus/executor.py` executa comandos no terminal com confirmacao, bloqueios, sudo, streaming e watchdog.
+- `orpheus/state.py` cuida de memoria, log, status vivo, baseline, monitor e painel textual.
+- `orpheus/app.py` orquestra o loop principal, comandos internos, prompt, historico, memoria e chamadas de ferramenta.
+
+Resumo do fluxo:
+
+```text
+usuario -> app.py -> api.py -> modelo -> executor.py/state.py -> app.py -> modelo -> resposta final
+```
 
 ## Instalacao
 
@@ -44,6 +77,19 @@ sudo
 coreutils
 curl
 ca-certificates
+procps
+util-linux
+iproute2
+grep
+sed
+gawk
+findutils
+pciutils
+usbutils
+network-manager
+systemd
+lsb-release
+git
 ```
 
 Ollama e Docker aparecem como opcionais nesse arquivo.
@@ -101,6 +147,9 @@ AI_LONG_COMMAND_TIMEOUT=900
 AI_IDLE_TIMEOUT=45
 AI_MAX_OUTPUT=12000
 AI_PROMPT_FILE=
+AI_MEMORY_FILE=
+AI_LOG_FILE=
+AI_STATE_FILE=
 ```
 
 `AI_AUTO_APPROVE=1` executa automaticamente comandos permitidos. Comandos perigosos continuam bloqueados.
@@ -167,6 +216,10 @@ Comandos:
 - `/forget N` remove o item numero `N`.
 
 A memoria manual salva qualquer frase valida. A memoria automatica salva apenas fatos considerados uteis, como sistema operacional, preferencias, Docker instalado, servico do Docker, grupo `docker`, provedor desejado e auto-programacao.
+
+Quando a memoria nova tem o mesmo tipo de uma memoria antiga, o Orpheus substitui o fato anterior em vez de guardar duplicado. Exemplo: se o sistema operacional ou estado do Docker mudar, a memoria mais nova fica no lugar da antiga.
+
+Perguntas ambiguas como "esta funcionando?" nao devem fazer o agente assumir automaticamente Docker, internet ou outro alvo salvo na memoria. Nesses casos ele deve pedir uma clarificacao objetiva.
 
 O arquivo `.ai_memory.json` e local e esta no `.gitignore`. Ele nao deve ser enviado para o GitHub.
 
@@ -334,3 +387,19 @@ Arquivos locais ignorados pelo git:
 - OpenAI funciona via API externa configurada no `.env`.
 - Ollama funciona localmente se o servidor estiver rodando.
 - Apos adicionar usuario ao grupo `docker`, pode ser necessario sair e entrar novamente na sessao para usar Docker sem `sudo`.
+
+## Validacao De Desenvolvimento
+
+Depois de alterar codigo, rode:
+
+```sh
+python3 -m py_compile ai.py orpheus/*.py
+python3 ai.py --help
+python3 ai.py --monitor
+```
+
+Para testar abertura e encerramento sem chamar a API:
+
+```sh
+printf '/exit\n' | python3 ai.py --provider ollama
+```
