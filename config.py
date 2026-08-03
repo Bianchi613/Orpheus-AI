@@ -75,6 +75,7 @@ load_dotenv(SCRIPT_DIR / ".env")
 MEMORY_PATH = Path(os.environ.get("AI_MEMORY_FILE", SCRIPT_DIR / ".ai_memory.json")).expanduser()
 LOG_PATH = Path(os.environ.get("AI_LOG_FILE", SCRIPT_DIR / "ai.log")).expanduser()
 STATE_PATH = Path(os.environ.get("AI_STATE_FILE", SCRIPT_DIR / "ai.status.json")).expanduser()
+BASELINE_PATH = Path(os.environ.get("AI_BASELINE_FILE", SCRIPT_DIR / ".orpheus_baseline.json")).expanduser()
 PROMPT_PATH = Path(os.environ.get("AI_PROMPT_FILE", SCRIPT_DIR / ".ai_prompt.txt"))
 
 # Variáveis principais do executor. Todas podem ser ajustadas no .env.

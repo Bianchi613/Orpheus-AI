@@ -120,10 +120,10 @@ def read_status() -> dict[str, Any] | None:
 
 
 def ensure_local_files() -> None:
-    """Cria arquivos locais básicos na primeira execução real do agente.
+    """Cria arquivos locais básicos na primeira execução real do programa.
 
     Esses arquivos são privados, ignorados pelo git e pertencem à máquina onde
-    o Orpheus está rodando. A função não sobrescreve dados existentes.
+    o Orpheus está rodando. A função cria apenas o que ainda não existe.
     """
     try:
         cfg.MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -138,6 +138,13 @@ def ensure_local_files() -> None:
     try:
         cfg.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         cfg.LOG_PATH.touch(exist_ok=True)
+    except OSError:
+        pass
+
+    try:
+        baseline = baseline_path()
+        if not baseline.exists():
+            save_baseline(collect_system_snapshot())
     except OSError:
         pass
 
@@ -749,12 +756,13 @@ def run_watch(interval_seconds: int) -> None:
 
 def baseline_path() -> Path:
     """Caminho do baseline local; é ignorado pelo git."""
-    return cfg.SCRIPT_DIR / ".orpheus_baseline.json"
+    return cfg.BASELINE_PATH
 
 
 def save_baseline(snapshot: dict[str, Any]) -> Path:
     """Salva o estado atual para comparar depois com /compare."""
     path = baseline_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
 

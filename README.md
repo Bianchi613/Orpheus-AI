@@ -251,7 +251,7 @@ O arquivo `.ai_memory.json` e local e esta no `.gitignore`. Ele nao deve ser env
 
 ## Monitor E Status Vivo
 
-O Orpheus grava o estado atual em `ai.status.json`, ou no caminho definido por `AI_STATE_FILE`.
+O Orpheus grava o estado atual em `ai.status.json`, ou no caminho definido por `AI_STATE_FILE`. O baseline local usa `.orpheus_baseline.json`, ou `AI_BASELINE_FILE` se essa variavel for definida.
 
 Esse arquivo mostra informacoes como:
 
@@ -288,7 +288,7 @@ Esses arquivos nao ficam no GitHub. O proprio programa cria esses arquivos na ma
 - `ai.status.json`: criado ao iniciar o programa e atualizado durante a execucao, porque ele guarda o status vivo;
 - `ai.log`: criado uma vez ao iniciar o programa, se ainda nao existir; depois o programa apenas acrescenta eventos;
 - `.ai_memory.json`: criado uma vez ao iniciar o programa, se ainda nao existir, com memoria vazia (`items: []`); depois e atualizado por `/remember`, memoria automatica ou `/forget`;
-- `.orpheus_baseline.json`: criado somente quando o usuario roda `/baseline`, porque baseline vazio seria informacao falsa.
+- `.orpheus_baseline.json`: criado automaticamente na primeira vez que o programa roda, se ainda nao existir; depois pode ser atualizado manualmente com `/baseline`.
 
 Eles sao privados de cada maquina e continuam ignorados pelo git. Quem clonar o projeto nao recebe seus dados pessoais, mas o programa cria os arquivos locais quando rodar. A memoria e o log existentes nao sao sobrescritos na inicializacao.
 
@@ -379,7 +379,8 @@ Comandos de bordo:
 
 Baseline:
 
-- `/baseline` salva o estado atual em `.orpheus_baseline.json`;
+- na primeira execucao, o programa cria `.orpheus_baseline.json` automaticamente se ele ainda nao existir;
+- `/baseline` atualiza o estado salvo em `.orpheus_baseline.json`;
 - `/compare` compara o estado atual com o baseline salvo.
 
 Web e logs:
@@ -400,7 +401,7 @@ Web e logs:
 - `.env.example`: exemplo de configuracao;
 - `.env`: configuracao local, nao deve ser compartilhada;
 - `.ai_memory.json`: memoria persistente;
-- `.orpheus_baseline.json`: baseline local criado por `/baseline`;
+- `.orpheus_baseline.json`: baseline local criado automaticamente na primeira execucao e atualizavel por `/baseline`;
 - `ai.status.json`: status vivo local do agente;
 - `ai.log`: log local do agente;
 - `system-requirements.txt`: pacotes de sistema.
