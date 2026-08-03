@@ -400,7 +400,7 @@ def print_banner(provider: str, model: str, memory_count: int) -> None:
 def main() -> int:
     """Entrada principal: parseia argumentos e abre o REPL do terminal."""
     parser = argparse.ArgumentParser(description="Orpheus - computador de bordo inteligente para Linux")
-    parser.add_argument("--provider", choices=("openai", "ollama"))
+    parser.add_argument("--provider", choices=("openai", "xai", "ollama"))
     parser.add_argument("--model")
     parser.add_argument("pedido", nargs="*")
     parser.add_argument("--self-modify", choices=("on", "off"))
@@ -417,6 +417,16 @@ def main() -> int:
         model = args.model or os.environ.get("OLLAMA_MODEL", "qwen3:8b")
         base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         client = api.ApiClient(base_url)
+    elif provider == "xai":
+        model = args.model or os.environ.get("XAI_MODEL", "grok-build-0.1")
+        api_key = os.environ.get("XAI_API_KEY")
+        if not api_key:
+            print("Erro: XAI_API_KEY não está definida no ambiente ou no arquivo .env.")
+            return 1
+        base_url = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1")
+        client = api.ApiClient(base_url, api_key)
+        os.environ.pop("XAI_API_KEY", None)
+        del api_key
     else:
         model = args.model or os.environ.get("OPENAI_MODEL", "gpt-5.6")
         api_key = os.environ.get("OPENAI_API_KEY")
