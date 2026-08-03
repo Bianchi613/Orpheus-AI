@@ -435,6 +435,7 @@ def main() -> int:
 
     prompt_template = load_prompt_template()
     history: list[Any] = []
+    state.ensure_local_files()
     memory = state.load_memory()
     state.write_status("idle", "agente iniciado e aguardando comando", provider=provider, model=model)
     print_banner(provider, model, len(memory))

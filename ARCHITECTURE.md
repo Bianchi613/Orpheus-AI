@@ -171,6 +171,13 @@ __pycache__/
 
 Nao coloque chaves, memoria, logs ou status em commits.
 
+Criacao local automatica pelo programa, antes do agente usar os arquivos:
+
+- `ai.status.json`: criado e atualizado por `state.write_status()` durante a execucao normal do programa;
+- `ai.log`: criado uma vez na inicializacao por `state.ensure_local_files()`, se ainda nao existir, e atualizado por `state.append_log()`;
+- `.ai_memory.json`: criado uma vez na inicializacao por `state.ensure_local_files()`, se ainda nao existir, com memoria vazia e atualizado por `state.save_memory()`;
+- `.orpheus_baseline.json`: criado por `state.save_baseline()` somente quando `/baseline` e usado.
+
 ## Auto-Programacao
 
 Quando `AI_SELF_MODIFY=1`, o agente pode editar o proprio projeto se o usuario pedir.

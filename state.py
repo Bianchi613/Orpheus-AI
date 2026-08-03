@@ -119,6 +119,29 @@ def read_status() -> dict[str, Any] | None:
         return None
 
 
+def ensure_local_files() -> None:
+    """Cria arquivos locais básicos na primeira execução real do agente.
+
+    Esses arquivos são privados, ignorados pelo git e pertencem à máquina onde
+    o Orpheus está rodando. A função não sobrescreve dados existentes.
+    """
+    try:
+        cfg.MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if not cfg.MEMORY_PATH.exists():
+            cfg.MEMORY_PATH.write_text(
+                json.dumps({"items": []}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+    except OSError:
+        pass
+
+    try:
+        cfg.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        cfg.LOG_PATH.touch(exist_ok=True)
+    except OSError:
+        pass
+
+
 def print_monitor() -> None:
     """Mostra uma leitura humana do ai.status.json."""
     status = read_status()

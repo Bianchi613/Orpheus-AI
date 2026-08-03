@@ -281,6 +281,17 @@ Dentro do agente:
 
 O `ai.status.json` tambem e local e esta no `.gitignore`.
 
+## Arquivos Locais Criados Automaticamente
+
+Esses arquivos nao ficam no GitHub. O proprio programa cria esses arquivos na maquina de quem clonar e rodar. O agente apenas usa esses arquivos depois que o programa preparou o ambiente local:
+
+- `ai.status.json`: criado ao iniciar o programa e atualizado durante a execucao, porque ele guarda o status vivo;
+- `ai.log`: criado uma vez ao iniciar o programa, se ainda nao existir; depois o programa apenas acrescenta eventos;
+- `.ai_memory.json`: criado uma vez ao iniciar o programa, se ainda nao existir, com memoria vazia (`items: []`); depois e atualizado por `/remember`, memoria automatica ou `/forget`;
+- `.orpheus_baseline.json`: criado somente quando o usuario roda `/baseline`, porque baseline vazio seria informacao falsa.
+
+Eles sao privados de cada maquina e continuam ignorados pelo git. Quem clonar o projeto nao recebe seus dados pessoais, mas o programa cria os arquivos locais quando rodar. A memoria e o log existentes nao sao sobrescritos na inicializacao.
+
 ## Auto-Programacao
 
 Quando `AI_SELF_MODIFY=1`, o agente pode editar arquivos do proprio projeto quando voce pedir algo como:
