@@ -34,6 +34,27 @@ WEB_FETCH_TOOL = {
     }
 }
 
+AGENT_LOG_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "read_agent_log",
+        "description": (
+            "Lê as atividades recentes persistidas pelo próprio Orpheus, sem expor "
+            "respostas brutas da API, métricas de tokens ou o arquivo inteiro."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "lines": {
+                    "type": "integer",
+                    "description": "Quantidade máxima de eventos recentes, entre 1 e 100.",
+                }
+            },
+            "additionalProperties": False,
+        },
+    },
+}
+
 SHELL_TOOL = {
     "type": "function",
     "function": {
@@ -67,7 +88,7 @@ class ApiClient:
             {
                 "model": model,
                 "messages": messages,
-                "tools": [SHELL_TOOL, WEB_FETCH_TOOL],
+                "tools": [SHELL_TOOL, WEB_FETCH_TOOL, AGENT_LOG_TOOL],
                 "tool_choice": "auto",
                 "stream": False,
             },

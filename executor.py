@@ -97,7 +97,8 @@ BLOCK_RULES: list[tuple[re.Pattern[str], str]] = [
 ]
 
 
-# Comandos normalmente apenas informativos. Estes rodam sem confirmação.
+# Comandos normalmente apenas informativos. Esta classificação continua sendo
+# usada para validação e pós-execução, não para dispensar aprovação humana.
 READ_ONLY_PREFIXES = {
     "pwd", "ls", "dir", "stat", "file", "du", "df", "free", "uptime", "date",
     "whoami", "id", "groups", "uname", "hostname", "lscpu", "lsblk", "lspci",
@@ -379,12 +380,17 @@ def docker_status_failed(command: str, result: CommandResult) -> bool:
     )
 
 
+def bash_command(command: str) -> str:
+    """Executa com pipefail para não mascarar erro em pipelines."""
+    return f"set -o pipefail\n{command}"
+
+
 def internal_read_command(command: str, timeout: float = 20, output_limit: int = 4000) -> CommandResult:
     """Executa diagnóstico interno rápido sem pedir aprovação ao usuário."""
     state.append_log("internal_command", command)
     try:
         completed = subprocess.run(
-            command,
+            bash_command(command),
             shell=True,
             executable="/bin/bash",
             cwd=str(cfg.WORKDIR),
@@ -415,11 +421,11 @@ def internal_read_command(command: str, timeout: float = 20, output_limit: int =
 
 
 def ask_approval(command: str) -> bool:
-    """Pede confirmação humana antes de comandos que podem alterar o sistema."""
-    if cfg.AUTO_APPROVE or looks_read_only(command):
+    """Pede confirmação humana antes de qualquer comando do modelo."""
+    if cfg.AUTO_APPROVE:
         return True
 
-    print("\nA IA quer executar um comando que pode alterar o estado:")
+    print("\nA IA quer executar este comando:")
     print(f"  {command}")
     while True:
         try:
@@ -652,7 +658,7 @@ def run_captured_streaming(command: str, timeout: float, output_limit: int) -> C
     notices: list[str] = []
 
     process = subprocess.Popen(
-        command,
+        bash_command(command),
         shell=True,
         executable="/bin/bash",
         cwd=str(cfg.WORKDIR),
@@ -766,7 +772,7 @@ def run_command(command: str, timeout: float, output_limit: int) -> CommandResul
     try:
         if needs_interactive_terminal(command):
             completed = subprocess.run(
-                command,
+                bash_command(command),
                 shell=True,
                 executable="/bin/bash",
                 cwd=str(cfg.WORKDIR),

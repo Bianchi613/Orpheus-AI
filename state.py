@@ -87,6 +87,36 @@ def grep_log(term: str, limit: int = 80) -> str:
     matches = matches[-max(1, limit):]
     return "\n".join(matches) if matches else f"Nenhuma linha encontrada para: {term}"
 
+
+def read_recent_activity(lines: int = 40) -> str:
+    """Lê eventos úteis recentes sem incluir respostas brutas e métricas da API."""
+    if not cfg.LOG_PATH.is_file():
+        return f"Log ainda não existe: {cfg.LOG_PATH}"
+    try:
+        content = cfg.LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return f"Não consegui ler o log em {cfg.LOG_PATH}"
+
+    limit = max(1, min(int(lines), 100))
+    useful_events = {"user", "assistant", "command", "result", "rejected", "blocked"}
+    selected: list[str] = []
+    for line in reversed(content):
+        match = re.match(r"^(\[[^]]+\])\s+([a-z_]+):\s*(.*)$", line)
+        if not match or match.group(2) not in useful_events:
+            continue
+        timestamp, event, detail = match.groups()
+        selected.append(f"{timestamp} {event}: {detail[:2000]}")
+        if len(selected) >= limit:
+            break
+    selected.reverse()
+    if not selected:
+        return "Nenhuma atividade útil registrada ainda."
+    header = (
+        "ATIVIDADES RECENTES (não é o log completo). "
+        "Relate somente ações explicitamente listadas; não deduza comandos ausentes."
+    )
+    return header + "\n" + "\n".join(selected)
+
 def write_status(state: str, summary: str, **extra: Any) -> None:
     """Atualiza o arquivo vivo ai.status.json usado pelo /monitor."""
     payload = {
@@ -194,15 +224,82 @@ def load_memory() -> list[str]:
     else:
         return []
 
-    return [item.strip() for item in items if isinstance(item, str) and item.strip()]
+    loaded: list[str] = []
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            loaded.append(item.strip())
+        elif isinstance(item, dict):
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                loaded.append(text.strip())
+    return loaded
 
 
 def save_memory(items: list[str]) -> None:
-    """Salva a memória em JSON local ignorado pelo git."""
+    """Salva memórias datadas, preservando a criação de itens existentes."""
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    legacy_date = now
+    previous_by_key: dict[str, dict[str, str]] = {}
+    if cfg.MEMORY_PATH.is_file():
+        try:
+            legacy_date = time.strftime(
+                "%Y-%m-%d %H:%M:%S",
+                time.localtime(cfg.MEMORY_PATH.stat().st_mtime),
+            )
+            previous_data = json.loads(cfg.MEMORY_PATH.read_text(encoding="utf-8"))
+            previous_items = previous_data.get("items", []) if isinstance(previous_data, dict) else previous_data
+            for previous in previous_items if isinstance(previous_items, list) else []:
+                if isinstance(previous, str) and previous.strip():
+                    text = previous.strip()
+                    previous_by_key[canonical_memory_key(text)] = {
+                        "text": text,
+                        "created_at": legacy_date,
+                        "updated_at": legacy_date,
+                    }
+                elif isinstance(previous, dict) and isinstance(previous.get("text"), str):
+                    text = previous["text"].strip()
+                    if text:
+                        previous_by_key[canonical_memory_key(text)] = {
+                            "text": text,
+                            "created_at": str(previous.get("created_at") or legacy_date),
+                            "updated_at": str(previous.get("updated_at") or previous.get("created_at") or legacy_date),
+                        }
+        except (OSError, json.JSONDecodeError):
+            previous_by_key = {}
+
+    records: list[dict[str, str]] = []
+    for item in items:
+        text = " ".join(item.strip().split())
+        if not text:
+            continue
+        previous = previous_by_key.get(canonical_memory_key(text))
+        unchanged = previous and normalize_memory_item(previous["text"]) == normalize_memory_item(text)
+        records.append({
+            "text": text,
+            "created_at": previous["created_at"] if previous else now,
+            "updated_at": previous["updated_at"] if unchanged else now,
+        })
+
     cfg.MEMORY_PATH.write_text(
-        json.dumps({"items": items}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(
+            {"version": 2, "updated_at": now, "items": records},
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
         encoding="utf-8",
     )
+
+
+def memory_records() -> list[dict[str, str]]:
+    """Devolve memórias com datas para exibição e diagnóstico."""
+    if not cfg.MEMORY_PATH.is_file():
+        return []
+    try:
+        data = json.loads(cfg.MEMORY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    items = data.get("items", []) if isinstance(data, dict) else []
+    return [item for item in items if isinstance(item, dict) and isinstance(item.get("text"), str)]
 
 
 def normalize_memory_item(text: str) -> str:

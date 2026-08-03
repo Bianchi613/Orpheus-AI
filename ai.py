@@ -51,10 +51,15 @@ def load_prompt_template() -> str:
 
 
 def render_prompt(template: str, memory: list[str]) -> str:
-    """Preenche variáveis do prompt: pasta, memória e modo self-modify."""
+    """Preenche variáveis do prompt e informa os caminhos internos reais."""
     return (
         template
         .replace("{{WORKDIR}}", str(cfg.WORKDIR))
+        .replace("{{SCRIPT_DIR}}", str(cfg.SCRIPT_DIR))
+        .replace("{{LOG_PATH}}", str(cfg.LOG_PATH))
+        .replace("{{STATE_PATH}}", str(cfg.STATE_PATH))
+        .replace("{{MEMORY_PATH}}", str(cfg.MEMORY_PATH))
+        .replace("{{PROMPT_PATH}}", str(cfg.PROMPT_PATH))
         .replace("{{MEMORY}}", state.memory_text(memory))
         .replace("{{SELF_MODIFY}}", self_modify_text())
     )
@@ -70,6 +75,21 @@ def command_result_text(result: executor.CommandResult) -> str:
         },
         ensure_ascii=False,
     )
+
+
+def tool_call_signature(call: dict[str, Any]) -> str:
+    """Identifica chamadas repetidas, ignorando o limite variável do leitor de log."""
+    function = call.get("function") or {}
+    name = str(function.get("name") or "tool")
+    if name == "read_agent_log":
+        return name
+    raw_args = function.get("arguments") or "{}"
+    try:
+        args = raw_args if isinstance(raw_args, dict) else json.loads(raw_args)
+        normalized_args = json.dumps(args, ensure_ascii=False, sort_keys=True)
+    except (json.JSONDecodeError, TypeError):
+        normalized_args = str(raw_args)
+    return f"{name}:{normalized_args}"
 
 
 # Padrões usados para detectar quando a IA está orientando demais em vez de agir.
@@ -181,6 +201,8 @@ def run_task(
         ambiguous_working_query = not any(token in lowered_user_text for token in explicit_targets)
     tool_nudges = 0
     summary_nudges = 0
+    executed_tool_signatures: set[str] = set()
+    duplicate_tool_nudges = 0
 
     for _step in range(1, cfg.MAX_STEPS + 1):
         # Cada ciclo envia o histórico atual para a API. Se o modelo pedir
@@ -238,26 +260,6 @@ def run_task(
                     ),
                 )
                 continue
-            probe_command = extract_safe_probe_command(final_text)
-            if probe_command:
-                result = executor.run_command(probe_command, cfg.DEFAULT_TIMEOUT, cfg.MAX_CAPTURE)
-                remembered_from_command = state.add_memory_items(
-                    memory,
-                    state.infer_memory_from_command_output(probe_command, result),
-                )
-                for item in remembered_from_command:
-                    print(f"Memória atualizada: {item}")
-                append_history_message(
-                    history,
-                    "user",
-                    (
-                        f'O comando de diagnóstico "{probe_command}" foi executado '
-                        f'automaticamente. Resultado JSON: {command_result_text(result)}. '
-                        "Continue a tarefa sem me pedir para rodar comandos."
-                    ),
-                )
-                tool_nudges += 1
-                continue
             if ambiguous_working_query and summary_nudges < 2:
                 summary_nudges += 1
                 append_history_message(
@@ -285,12 +287,33 @@ def run_task(
                 )
                 continue
             state.write_status("completed", "tarefa concluída", step=_step)
+            state.append_log("assistant", final_text or "tarefa encerrada sem resposta textual.")
             print(cfg.colorize(f"\nIA: {final_text or 'tarefa encerrada sem resposta textual.'}", cfg.COLOR_AI))
             return
 
         should_prompt_validation = False
         should_prompt_docker_journal = False
-        for call in tool_calls:
+        intent = (message.get("content") or "").strip()
+        has_new_tool = any(tool_call_signature(call) not in executed_tool_signatures for call in tool_calls)
+        if intent and has_new_tool:
+            print(cfg.colorize(f"\nIA: {intent}", cfg.COLOR_AI))
+        elif has_new_tool:
+            first_function = (tool_calls[0].get("function") or {}) if tool_calls else {}
+            first_name = first_function.get("name")
+            try:
+                first_raw_args = first_function.get("arguments") or "{}"
+                first_args = first_raw_args if isinstance(first_raw_args, dict) else json.loads(first_raw_args)
+            except json.JSONDecodeError:
+                first_args = {}
+            if first_name == "run_shell" and first_args.get("command"):
+                fallback_intent = f"Vou pedir autorização para executar: {first_args['command']}"
+            elif first_name in {"fetch_url", "api.fetch_url"} and first_args.get("url"):
+                fallback_intent = f"Vou consultar esta URL para continuar a investigação: {first_args['url']}"
+            else:
+                fallback_intent = f"Vou usar a ferramenta {first_name or 'solicitada'} para continuar a tarefa."
+            print(cfg.colorize(f"\nIA: {fallback_intent}", cfg.COLOR_AI))
+
+        for call_index, call in enumerate(tool_calls):
             # Para cada ferramenta chamada pelo modelo, executamos localmente e
             # acrescentamos uma mensagem role=tool com o resultado. Isso evita o
             # erro da API de tool_call sem resposta correspondente.
@@ -305,7 +328,19 @@ def run_task(
                 args = None
                 result_text = json.dumps({"error": f"argumentos inválidos: {exc}"})
             else:
-                if name == "run_shell":
+                signature = tool_call_signature(call)
+                duplicate_call = signature in executed_tool_signatures
+                if duplicate_call:
+                    result_text = json.dumps({
+                        "error": "ferramenta já usada nesta tarefa; não repita nem amplie a consulta, responda com as evidências disponíveis"
+                    })
+                    duplicate_tool_nudges += 1
+                else:
+                    executed_tool_signatures.add(signature)
+
+                if duplicate_call:
+                    pass
+                elif name == "run_shell":
                     try:
                         command = args.get("command")
                         if not isinstance(command, str) or not command.strip():
@@ -333,6 +368,12 @@ def run_task(
                             api.fetch_url(url.strip(), str(method), max_bytes),
                             ensure_ascii=False,
                         )
+                elif name == "read_agent_log":
+                    lines = args.get("lines", 40)
+                    try:
+                        result_text = state.read_recent_activity(int(lines))
+                    except (TypeError, ValueError):
+                        result_text = json.dumps({"error": "lines deve ser um número inteiro"})
                 else:
                     result_text = json.dumps({"error": "ferramenta desconhecida"})
 
@@ -342,8 +383,40 @@ def run_task(
                 result_text,
                 tool_call_id=call.get("id", function.get("name", "run_shell")),
             )
+            if result and result.exit_code == 125:
+                cancelled = json.dumps({"error": "ação cancelada após rejeição do usuário"})
+                for pending_call in tool_calls[call_index + 1:]:
+                    pending_function = pending_call.get("function") or {}
+                    append_history_message(
+                        history,
+                        "tool",
+                        cancelled,
+                        tool_call_id=pending_call.get("id", pending_function.get("name", "tool")),
+                    )
+                state.write_status("cancelled", "ação rejeitada pelo usuário", step=_step)
+                print(cfg.colorize("\nIA: Entendido. A ação foi cancelada e não vou insistir nesta tarefa.", cfg.COLOR_AI))
+                return
             if result and result.exit_code == 0 and not executor.looks_read_only(command):
                 should_prompt_validation = True
+
+        if duplicate_tool_nudges:
+            if duplicate_tool_nudges > 1:
+                state.write_status("stopped", "repetição de ferramenta bloqueada", step=_step)
+                print(cfg.colorize(
+                    "\nIA: Interrompi a tarefa porque a mesma consulta foi solicitada repetidamente.",
+                    cfg.COLOR_AI,
+                ))
+                return
+            append_history_message(
+                history,
+                "user",
+                (
+                    "A consulta repetida foi bloqueada. Não chame outra ferramenta. "
+                    "Responda agora usando somente as ações explicitamente presentes no resultado anterior; "
+                    "se não houver prova suficiente, diga isso claramente."
+                ),
+            )
+            continue
 
         if should_prompt_docker_journal:
             # Caso especial: Docker falhou. O próximo passo útil quase sempre é
@@ -377,7 +450,7 @@ def run_task(
 
 def print_banner(provider: str, model: str, memory_count: int) -> None:
     """Imprime o cabeçalho inicial com modo, modelo, caminhos e comandos."""
-    mode = "automático" if cfg.AUTO_APPROVE else "confirma mudanças"
+    mode = "automático" if cfg.AUTO_APPROVE else "confirma comandos"
     self_mode = "ativa" if cfg.SELF_MODIFY else "desativada"
     print(cfg.colorize(cfg.APP_NAME, cfg.BOLD + cfg.COLOR_INFO))
     print(f"Versão:   {cfg.APP_VERSION}")
@@ -595,8 +668,16 @@ def main() -> int:
             if not memory:
                 print("Memória vazia.")
             else:
+                records = {
+                    state.canonical_memory_key(record["text"]): record
+                    for record in state.memory_records()
+                }
                 for index, item in enumerate(memory, 1):
-                    print(f"{index}. {item}")
+                    record = records.get(state.canonical_memory_key(item), {})
+                    created_at = record.get("created_at", "data desconhecida")
+                    updated_at = record.get("updated_at", created_at)
+                    date_text = created_at if updated_at == created_at else f"{created_at}; atualizada {updated_at}"
+                    print(f"{index}. [{date_text}] {item}")
             continue
 
         if command.startswith("/remember "):
@@ -641,7 +722,7 @@ def main() -> int:
 
         if command == "/auto off":
             cfg.AUTO_APPROVE = False
-            print("Confirmação ativada para comandos que podem alterar o estado.")
+            print("Confirmação ativada para todos os comandos.")
             continue
 
         if command in {"/self", "/self status"}:
