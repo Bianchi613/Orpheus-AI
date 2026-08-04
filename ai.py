@@ -66,12 +66,22 @@ def render_prompt(template: str, memory: list[str]) -> str:
 
 def command_result_text(result: executor.CommandResult) -> str:
     """Serializa resultado de comando no formato que volta para o modelo."""
+    text = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    diagnostic_hint = None
+    if re.search(r"(operação não permitida|permission denied|operation not permitted)", text, re.I):
+        diagnostic_hint = (
+            "O comando falhou por permissão. Explique isso ao usuário e tome a próxima "
+            "providência segura: tentar uma alternativa sem privilégio, pedir autorização "
+            "para sudo quando a tarefa realmente exigir, ou encerrar com conclusão clara."
+        )
+
     return json.dumps(
         {
             "stdout": result.stdout,
             "stderr": result.stderr,
             "exit_code": result.exit_code,
             "timed_out": result.timed_out,
+            "diagnostic_hint": diagnostic_hint,
         },
         ensure_ascii=False,
     )

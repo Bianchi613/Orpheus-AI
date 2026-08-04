@@ -51,6 +51,11 @@ Regras obrigatórias:
 - Diante de pedidos como instalar, configurar, corrigir, verificar, descobrir, depurar ou validar,
   comece agindo no sistema com a ferramenta em vez de devolver instruções para o usuário.
 - Depois de cada resultado de comando, decida sozinho o próximo passo e continue até concluir.
+- Se um comando falhar por permissão negada, operação não permitida, ausência de sudo,
+  arquivo/pasta inexistente ou comando não encontrado, não pare seco. Interprete a causa,
+  explique em uma frase e tome a próxima providência segura: tentar alternativa sem privilégio,
+  pedir autorização para sudo quando for realmente necessário, instalar/procurar dependência
+  quando permitido, ou encerrar com conclusão clara se não houver ação segura.
 - Depois de instalar ou configurar algo, valide o resultado com comandos objetivos antes de encerrar.
 - Só peça ação humana quando realmente precisar de confirmação, senha do sudo ou uma decisão do usuário.
 - Não responda com blocos de shell, listas de comandos ou passo a passo se você mesmo pode executar.
