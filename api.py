@@ -5,7 +5,10 @@ Este módulo responde: como o agente fala com OpenAI/Ollama e como busca URLs p�
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -107,13 +110,44 @@ class ApiClient:
         except urllib.error.URLError as exc:
             raise RuntimeError(f"não foi possível conectar a {self.url}: {exc.reason}") from exc
 
+def _validate_public_url(url: str) -> None:
+    """Bloqueia destinos internos, credenciais em URLs e endereços não públicos."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Apenas URLs HTTP(S) válidas são permitidas")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Credenciais embutidas na URL não são permitidas")
+    if os.getenv("ORPHEUS_ALLOW_PRIVATE_WEB_URLS", "0") == "1":
+        return
+    hostname = parsed.hostname.rstrip(".")
+    if hostname.lower() in {"localhost", "localhost.localdomain"} or hostname.lower().endswith((".localhost", ".local", ".internal")):
+        raise ValueError("Endereço local ou interno bloqueado")
+    try:
+        resolved = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError("Host não pôde ser resolvido") from exc
+    if not resolved:
+        raise ValueError("Host sem endereços válidos")
+    for address_info in resolved:
+        address = ipaddress.ip_address(address_info[4][0].split("%")[0])
+        if not address.is_global:
+            raise ValueError("Endereço privado, reservado ou local bloqueado")
+
+
+class _ValidatedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_public_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def fetch_url(url: str, method: str = "GET", max_bytes: int = 12000) -> dict[str, Any]:
     """Ferramenta web simples: busca página pública e devolve texto limitado."""
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        return {"error": "apenas URLs http e https são permitidas"}
-    if not parsed.netloc:
-        return {"error": "URL inválida"}
+    try:
+        _validate_public_url(url)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    if (method or "GET").upper() not in {"GET", "HEAD"}:
+        return {"error": "Apenas GET e HEAD são permitidos"}
 
     try:
         limit = max(256, min(int(max_bytes), 200000))
@@ -130,7 +164,7 @@ def fetch_url(url: str, method: str = "GET", max_bytes: int = 12000) -> dict[str
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.build_opener(_ValidatedRedirectHandler()).open(request, timeout=30) as response:
             body = b"" if request.get_method() == "HEAD" else response.read(limit + 1)
             truncated = len(body) > limit
             if truncated:
