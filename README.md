@@ -442,3 +442,16 @@ Para testar abertura e encerramento sem chamar a API:
 ```sh
 printf '/exit\n' | python3 ai.py --provider ollama
 ```
+
+
+## Segurança de acesso web
+
+A ferramenta `/web` bloqueia, por padrão, URLs que resolvam para loopback,
+redes privadas ou endereços reservados, inclusive em redirecionamentos HTTP.
+URLs que embutem usuário/senha também são rejeitadas. Isso reduz o risco de
+SSRF quando conteúdo não confiável influencia o agente.
+
+Para testes locais **somente em ambiente confiável**, pode-se definir
+`ORPHEUS_ALLOW_PRIVATE_WEB_URLS=1`. Não habilite essa exceção para agentes
+expostos a instruções de terceiros. A verificação de DNS é preventiva, mas
+não substitui uma política de rede/egress para evitar ataques de DNS rebinding.
