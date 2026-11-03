@@ -9,6 +9,7 @@ Versao atual no codigo: `2026.08.01.30`.
 Documentacao complementar:
 
 - `ARCHITECTURE.md`: explica a organizacao interna por modulos e o fluxo do agente.
+- [`SECURITY.md`](SECURITY.md): mudanças de segurança, limites da proteção SSRF, testes de regressão e riscos do agente com acesso ao terminal.
 
 ## O Que Ele Faz
 
@@ -445,6 +446,8 @@ printf '/exit\n' | python3 ai.py --provider ollama
 
 
 ## Segurança de acesso web
+
+A descrição completa dos controles, roteiro de testes e riscos residuais está em [SECURITY.md](SECURITY.md).
 
 A ferramenta `/web` bloqueia, por padrão, URLs que resolvam para loopback,
 redes privadas ou endereços reservados, inclusive em redirecionamentos HTTP.
